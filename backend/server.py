@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from ecu_parser import ME7Parser, MapDefinition
 from disassembler import C166Disassembler
+from definitions_manager import DefinitionsManager, AxisDetector
 
 app = FastAPI(title="Alien ECU Engine", version="1.0.0")
 
