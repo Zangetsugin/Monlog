@@ -1,20 +1,21 @@
 """
-ECU Calibration Tool - Backend Server
+Alien ECU Engine - Backend Server
 FastAPI server for ME7.4.4/ME7.4.5 calibration
 """
 import os
 import io
 import struct
+import json
 from typing import List, Dict, Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 
 from ecu_parser import ME7Parser, MapDefinition
 from disassembler import C166Disassembler
 
-app = FastAPI(title="ECU Calibration Tool", version="1.0.0")
+app = FastAPI(title="Alien ECU Engine", version="1.0.0")
 
 # CORS
 app.add_middleware(
@@ -49,9 +50,25 @@ class MapEditRequest(BaseModel):
     rows: int
     cols: int
 
+class MapOperationRequest(BaseModel):
+    offset: int
+    rows: int
+    cols: int
+    operation: str  # add, subtract, multiply, divide, percent
+    value: float
+
 class HexEditRequest(BaseModel):
     offset: int
     value: int
+
+class AnnotationRequest(BaseModel):
+    offset: int
+    text: str
+    type: str = "comment"
+
+class FunctionRenameRequest(BaseModel):
+    offset: int
+    name: str
 
 # Routes
 @app.get("/api/status")
@@ -103,7 +120,6 @@ def parse_intel_hex(hex_content: bytes) -> bytes:
             
             if record_type == 0x00:  # Data record
                 full_addr = base_addr + address
-                # Extend data if needed
                 while len(data) < full_addr:
                     data.append(0xFF)
                 
@@ -114,11 +130,11 @@ def parse_intel_hex(hex_content: bytes) -> bytes:
                     else:
                         data.append(byte_val)
                         
-            elif record_type == 0x02:  # Extended segment address
+            elif record_type == 0x02:
                 base_addr = int(line[9:13], 16) << 4
-            elif record_type == 0x04:  # Extended linear address  
+            elif record_type == 0x04:
                 base_addr = int(line[9:13], 16) << 16
-            elif record_type == 0x01:  # EOF
+            elif record_type == 0x01:
                 break
         except:
             continue
@@ -148,7 +164,6 @@ async def edit_hex(req: HexEditRequest):
     if not parser:
         raise HTTPException(status_code=400, detail="No file loaded")
     
-    # Modify byte
     data = bytearray(current_file)
     if req.offset < len(data):
         data[req.offset] = req.value & 0xFF
@@ -185,8 +200,18 @@ async def scan_maps():
             "description": m.description,
             "min": m.min_val,
             "max": m.max_val,
-            "avg": m.avg_val
+            "avg": m.avg_val,
+            "category": m.category
         } for m in maps]
+    }
+
+@app.get("/api/maps/known")
+async def get_known_maps():
+    """Get list of known ME7.4.4 maps"""
+    if not parser:
+        raise HTTPException(status_code=400, detail="No file loaded")
+    return {
+        "maps": parser.get_known_maps()
     }
 
 @app.post("/api/maps/get")
@@ -212,10 +237,8 @@ async def edit_map_cell(req: MapEditRequest):
     if not parser:
         raise HTTPException(status_code=400, detail="No file loaded")
     
-    # Calculate byte offset
     cell_offset = req.offset + (req.row * req.cols + req.col) * 2
     
-    # Modify word (16-bit little endian)
     data = bytearray(current_file)
     if cell_offset + 1 < len(data):
         data[cell_offset] = req.value & 0xFF
@@ -226,6 +249,49 @@ async def edit_map_cell(req: MapEditRequest):
     
     return {"success": True, "offset": cell_offset, "value": req.value}
 
+@app.post("/api/maps/operation")
+async def apply_map_operation(req: MapOperationRequest):
+    """Apply operation to entire map (add, subtract, multiply, divide, percent)"""
+    global current_file, parser, disasm
+    if not parser:
+        raise HTTPException(status_code=400, detail="No file loaded")
+    
+    current_file = parser.apply_map_operation(
+        req.offset, req.rows, req.cols, req.operation, req.value
+    )
+    parser = ME7Parser(current_file)
+    disasm = C166Disassembler(current_file)
+    
+    # Return updated map
+    m = parser.get_map_at_offset(req.offset, req.rows, req.cols)
+    return {
+        "success": True,
+        "operation": req.operation,
+        "value": req.value,
+        "map": {
+            "offset": m.offset,
+            "rows": m.rows,
+            "cols": m.cols,
+            "min": m.min_val,
+            "max": m.max_val,
+            "data": m.data
+        }
+    }
+
+@app.get("/api/maps/export")
+async def export_map_csv(offset: int, rows: int, cols: int):
+    """Export map to CSV"""
+    if not parser:
+        raise HTTPException(status_code=400, detail="No file loaded")
+    
+    csv_content = parser.export_map_csv(offset, rows, cols)
+    
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=map_{offset:04X}.csv"}
+    )
+
 @app.get("/api/singles")
 async def get_single_values():
     if not parser:
@@ -234,8 +300,23 @@ async def get_single_values():
     singles = parser.scan_single_values()
     return {
         "count": len(singles),
-        "values": [{"offset": s.offset, "value": s.value, "name": s.name, "size": s.size} for s in singles]
+        "values": [{
+            "offset": s.offset, 
+            "value": s.value, 
+            "name": s.name, 
+            "size": s.size,
+            "description": s.description,
+            "unit": s.unit
+        } for s in singles]
     }
+
+@app.get("/api/checksum")
+async def calculate_checksum():
+    """Calculate various checksums for the file"""
+    if not parser:
+        raise HTTPException(status_code=400, detail="No file loaded")
+    
+    return parser.calculate_checksum()
 
 @app.get("/api/disasm")
 async def disassemble(offset: int = 0, count: int = 50):
@@ -251,19 +332,76 @@ async def disassemble(offset: int = 0, count: int = 50):
             "bytes": i.bytes_hex,
             "mnemonic": i.mnemonic,
             "operands": i.operands,
-            "comment": i.comment
+            "comment": i.comment,
+            "is_branch": i.is_branch,
+            "branch_target": i.branch_target
         } for i in instructions]
     }
 
 @app.get("/api/functions")
 async def get_functions():
+    """Detect and return functions"""
     if not disasm:
         raise HTTPException(status_code=400, detail="No file loaded")
     
-    functions = disasm.find_functions()
+    functions = disasm.detect_functions()
     return {
         "count": len(functions),
-        "functions": functions
+        "functions": [{
+            "offset": f.offset,
+            "name": f.name,
+            "size": f.size
+        } for f in functions]
+    }
+
+@app.post("/api/functions/rename")
+async def rename_function(req: FunctionRenameRequest):
+    """Rename a function"""
+    if not disasm:
+        raise HTTPException(status_code=400, detail="No file loaded")
+    
+    disasm.rename_function(req.offset, req.name)
+    return {"success": True, "offset": req.offset, "name": req.name}
+
+@app.get("/api/xrefs")
+async def get_xrefs(offset: int):
+    """Get cross-references to an address"""
+    if not disasm:
+        raise HTTPException(status_code=400, detail="No file loaded")
+    
+    xrefs = disasm.get_xrefs_to(offset)
+    return {
+        "offset": offset,
+        "count": len(xrefs),
+        "xrefs": xrefs
+    }
+
+@app.post("/api/annotations/add")
+async def add_annotation(req: AnnotationRequest):
+    """Add annotation to an offset"""
+    if not disasm:
+        raise HTTPException(status_code=400, detail="No file loaded")
+    
+    disasm.add_annotation(req.offset, req.text, req.type)
+    return {"success": True, "offset": req.offset}
+
+@app.delete("/api/annotations/{offset}")
+async def remove_annotation(offset: int):
+    """Remove annotation"""
+    if not disasm:
+        raise HTTPException(status_code=400, detail="No file loaded")
+    
+    disasm.remove_annotation(offset)
+    return {"success": True}
+
+@app.get("/api/annotations")
+async def get_annotations():
+    """Get all annotations"""
+    if not disasm:
+        raise HTTPException(status_code=400, detail="No file loaded")
+    
+    return {
+        "annotations": disasm.export_annotations()
     }
 
 @app.get("/api/download")
@@ -276,21 +414,6 @@ async def download_file():
         media_type="application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename=modified_{current_filename}"}
     )
-
-@app.get("/api/checksum")
-async def calculate_checksum():
-    if not current_file:
-        raise HTTPException(status_code=400, detail="No file loaded")
-    
-    # Simple checksums
-    sum8 = sum(current_file) & 0xFF
-    sum16 = sum(struct.unpack('<' + 'H' * (len(current_file) // 2), current_file[:len(current_file)//2*2])) & 0xFFFF
-    
-    return {
-        "checksum_8bit": sum8,
-        "checksum_16bit": sum16,
-        "size": len(current_file)
-    }
 
 if __name__ == "__main__":
     import uvicorn
