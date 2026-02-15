@@ -215,11 +215,53 @@ async def scan_maps():
 
 @app.get("/api/maps/known")
 async def get_known_maps():
-    """Get list of known ME7.4.4 maps"""
+    """Get list of known ME7.4.4 maps from definitions"""
     if not parser:
         raise HTTPException(status_code=400, detail="No file loaded")
+    
+    # Get maps from definition file
+    defined_maps = definitions_mgr.get_defined_maps()
+    
     return {
-        "maps": parser.get_known_maps()
+        "maps": [{
+            "name": m.name,
+            "description": m.description,
+            "category": m.category,
+            "rows": m.rows,
+            "cols": m.cols,
+            "x_axis": m.x_axis,
+            "y_axis": m.y_axis,
+            "unit": m.unit,
+            "factor": m.factor
+        } for m in defined_maps]
+    }
+
+@app.get("/api/definitions")
+async def get_definitions():
+    """Get available ECU definitions"""
+    return {
+        "definitions": definitions_mgr.get_available_definitions()
+    }
+
+@app.post("/api/definitions/load")
+async def load_definition(name: str):
+    """Load a specific ECU definition"""
+    success = definitions_mgr.load_definition(name)
+    return {"success": success, "name": name}
+
+@app.get("/api/axes")
+async def get_axes():
+    """Get defined axes for current ECU"""
+    axes = definitions_mgr.get_axes()
+    return {
+        "axes": {
+            name: {
+                "name": axis.name,
+                "unit": axis.unit,
+                "values": axis.values
+            }
+            for name, axis in axes.items()
+        }
     }
 
 @app.post("/api/maps/get")
