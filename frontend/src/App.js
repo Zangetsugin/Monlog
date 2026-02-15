@@ -629,6 +629,7 @@ function Maps2DView({ maps, knownMaps, selectedMap, mapData, onSelectMap, onScan
   const [customCols, setCustomCols] = useState('8');
   const [showTools, setShowTools] = useState(false);
   const [operationValue, setOperationValue] = useState('');
+  const [showAxes, setShowAxes] = useState(true);
 
   const handleCellClick = (row, col, value) => {
     setEditingCell({ row, col });
@@ -656,6 +657,14 @@ function Maps2DView({ maps, knownMaps, selectedMap, mapData, onSelectMap, onScan
     }
   };
 
+  // Format axis value for display
+  const formatAxisValue = (val, axisType) => {
+    if (axisType?.type === 'RPM') return val;
+    if (axisType?.type === 'Load') return val;
+    if (axisType?.factor) return (val * axisType.factor).toFixed(1);
+    return val;
+  };
+
   return (
     <div className="h-full flex gap-4" data-testid="maps-view">
       {/* Maps list */}
@@ -673,8 +682,12 @@ function Maps2DView({ maps, knownMaps, selectedMap, mapData, onSelectMap, onScan
           <div className="p-2 border-b border-purple-900/20">
             <div className="text-xs text-purple-400/50 mb-2">Maps ME7.4.4 connues:</div>
             <div className="flex flex-wrap gap-1">
-              {knownMaps.slice(0, 8).map((m, idx) => (
-                <span key={idx} className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">
+              {knownMaps.slice(0, 12).map((m, idx) => (
+                <span 
+                  key={idx} 
+                  className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded cursor-pointer hover:bg-purple-500/30"
+                  title={m.description}
+                >
                   {m.name}
                 </span>
               ))}
@@ -752,9 +765,27 @@ function Maps2DView({ maps, knownMaps, selectedMap, mapData, onSelectMap, onScan
                   Offset: 0x{selectedMap?.offset.toString(16).toUpperCase()} | 
                   {selectedMap?.rows}×{selectedMap?.cols} | 
                   Min: {mapData.min} | Max: {mapData.max}
+                  {mapData.x_axis_type?.type && mapData.x_axis_type.type !== 'Index' && (
+                    <span className="ml-2 text-green-400">
+                      X: {mapData.x_axis_type.type} ({mapData.x_axis_type.unit})
+                    </span>
+                  )}
+                  {mapData.y_axis_type?.type && mapData.y_axis_type.type !== 'Index' && (
+                    <span className="ml-2 text-yellow-400">
+                      Y: {mapData.y_axis_type.type} ({mapData.y_axis_type.unit})
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="flex gap-2">
+                <button 
+                  onClick={() => setShowAxes(!showAxes)} 
+                  className={`btn-alien-sm ${showAxes ? 'bg-purple-500/30' : ''}`}
+                  title="Afficher/Masquer les axes"
+                >
+                  <BarChart3 className="w-4 h-4" />
+                  Axes
+                </button>
                 <button onClick={() => setShowTools(!showTools)} className="btn-alien-sm">
                   <Settings className="w-4 h-4" />
                   Outils
@@ -811,37 +842,90 @@ function Maps2DView({ maps, knownMaps, selectedMap, mapData, onSelectMap, onScan
             )}
             
             <div className="flex-1 overflow-auto p-4">
-              <div
-                className="grid gap-px"
-                style={{
-                  gridTemplateColumns: `repeat(${mapData.cols}, minmax(45px, 1fr))`,
-                }}
-              >
-                {mapData.data.map((row, ri) =>
-                  row.map((value, ci) => (
-                    <div
-                      key={`${ri}-${ci}`}
-                      className="map-cell-alien h-8"
-                      style={{ background: getColor(value, mapData.min, mapData.max) }}
-                      onClick={() => handleCellClick(ri, ci, value)}
-                    >
-                      {editingCell?.row === ri && editingCell?.col === ci ? (
-                        <input
-                          type="text"
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          onKeyDown={handleCellEdit}
-                          onBlur={() => setEditingCell(null)}
-                          autoFocus
-                          className="w-full h-full bg-transparent text-center text-white"
-                        />
-                      ) : (
-                        <span className={value > (mapData.max + mapData.min) / 2 ? 'text-white' : 'text-white'}>
-                          {value}
-                        </span>
-                      )}
+              {/* Map with axes */}
+              <div className="inline-block">
+                {/* X-Axis header */}
+                {showAxes && mapData.x_axis && (
+                  <div className="flex ml-12 mb-1">
+                    {mapData.x_axis.slice(0, mapData.cols).map((val, ci) => (
+                      <div
+                        key={ci}
+                        className="text-[10px] text-green-400 font-mono text-center"
+                        style={{ width: '45px', minWidth: '45px' }}
+                        title={mapData.x_axis_type?.type || 'X-Axis'}
+                      >
+                        {formatAxisValue(val, mapData.x_axis_type)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {/* Map grid with Y-axis */}
+                <div className="flex">
+                  {/* Y-Axis column */}
+                  {showAxes && mapData.y_axis && (
+                    <div className="flex flex-col mr-1">
+                      {mapData.y_axis.slice(0, mapData.rows).map((val, ri) => (
+                        <div
+                          key={ri}
+                          className="text-[10px] text-yellow-400 font-mono flex items-center justify-end pr-1"
+                          style={{ height: '32px', width: '44px' }}
+                          title={mapData.y_axis_type?.type || 'Y-Axis'}
+                        >
+                          {formatAxisValue(val, mapData.y_axis_type)}
+                        </div>
+                      ))}
                     </div>
-                  ))
+                  )}
+                  
+                  {/* Map data */}
+                  <div
+                    className="grid gap-px"
+                    style={{
+                      gridTemplateColumns: `repeat(${mapData.cols}, minmax(45px, 1fr))`,
+                    }}
+                  >
+                    {mapData.data.map((row, ri) =>
+                      row.map((value, ci) => (
+                        <div
+                          key={`${ri}-${ci}`}
+                          className="map-cell-alien h-8"
+                          style={{ background: getColor(value, mapData.min, mapData.max) }}
+                          onClick={() => handleCellClick(ri, ci, value)}
+                        >
+                          {editingCell?.row === ri && editingCell?.col === ci ? (
+                            <input
+                              type="text"
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onKeyDown={handleCellEdit}
+                              onBlur={() => setEditingCell(null)}
+                              autoFocus
+                              className="w-full h-full bg-transparent text-center text-white"
+                            />
+                          ) : (
+                            <span className={value > (mapData.max + mapData.min) / 2 ? 'text-white' : 'text-white'}>
+                              {value}
+                            </span>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+                
+                {/* Axis legend */}
+                {showAxes && (mapData.x_axis_type?.type !== 'Index' || mapData.y_axis_type?.type !== 'Index') && (
+                  <div className="mt-3 text-xs text-purple-400/60">
+                    <span className="mr-4">
+                      <span className="text-green-400">■</span> X: {mapData.x_axis_type?.type || 'Index'} 
+                      {mapData.x_axis_type?.unit && ` (${mapData.x_axis_type.unit})`}
+                    </span>
+                    <span>
+                      <span className="text-yellow-400">■</span> Y: {mapData.y_axis_type?.type || 'Index'}
+                      {mapData.y_axis_type?.unit && ` (${mapData.y_axis_type.unit})`}
+                    </span>
+                  </div>
                 )}
               </div>
             </div>
