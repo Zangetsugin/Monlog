@@ -4,19 +4,54 @@ import {
   Upload, FileCode, Table2, Binary, Code2, FileText,
   Download, RefreshCw, Search, Settings, ChevronRight,
   Cpu, HardDrive, Gauge, Layers, Eye, Edit3, Save,
-  ZoomIn, ZoomOut, Grid3X3, BarChart3, Box
+  ZoomIn, ZoomOut, Grid3X3, BarChart3, Box, Plus, Minus,
+  Percent, X, Check, FileDown, Hash, Target, GitBranch
 } from 'lucide-react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL || '';
+
+// Alien Logo SVG Component
+const AlienLogo = ({ className = "w-8 h-8" }) => (
+  <svg viewBox="0 0 100 100" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Chip body */}
+    <rect x="20" y="25" width="60" height="50" rx="5" fill="#1a1a2e" stroke="#8b5cf6" strokeWidth="2"/>
+    {/* Chip pins */}
+    <rect x="25" y="15" width="4" height="12" fill="#8b5cf6"/>
+    <rect x="35" y="15" width="4" height="12" fill="#8b5cf6"/>
+    <rect x="45" y="15" width="4" height="12" fill="#8b5cf6"/>
+    <rect x="55" y="15" width="4" height="12" fill="#8b5cf6"/>
+    <rect x="65" y="15" width="4" height="12" fill="#8b5cf6"/>
+    <rect x="25" y="73" width="4" height="12" fill="#8b5cf6"/>
+    <rect x="35" y="73" width="4" height="12" fill="#8b5cf6"/>
+    <rect x="45" y="73" width="4" height="12" fill="#8b5cf6"/>
+    <rect x="55" y="73" width="4" height="12" fill="#8b5cf6"/>
+    <rect x="65" y="73" width="4" height="12" fill="#8b5cf6"/>
+    <rect x="10" y="35" width="12" height="4" fill="#8b5cf6"/>
+    <rect x="10" y="45" width="12" height="4" fill="#8b5cf6"/>
+    <rect x="10" y="55" width="12" height="4" fill="#8b5cf6"/>
+    <rect x="78" y="35" width="12" height="4" fill="#8b5cf6"/>
+    <rect x="78" y="45" width="12" height="4" fill="#8b5cf6"/>
+    <rect x="78" y="55" width="12" height="4" fill="#8b5cf6"/>
+    {/* Alien head */}
+    <ellipse cx="50" cy="48" rx="18" ry="20" fill="#a855f7"/>
+    {/* Alien eyes */}
+    <ellipse cx="42" cy="45" rx="6" ry="8" fill="#0f0f1a"/>
+    <ellipse cx="58" cy="45" rx="6" ry="8" fill="#0f0f1a"/>
+    {/* Eye shine */}
+    <ellipse cx="40" cy="43" rx="2" ry="3" fill="#c4b5fd"/>
+    <ellipse cx="56" cy="43" rx="2" ry="3" fill="#c4b5fd"/>
+  </svg>
+);
 
 // Tabs configuration
 const TABS = [
   { id: 'hex', label: 'Hex Editor', icon: Binary },
   { id: 'maps', label: 'Maps 2D', icon: Grid3X3 },
-  { id: 'maps3d', label: 'Maps 3D', icon: Box },
   { id: 'singles', label: 'Valeurs', icon: Gauge },
   { id: 'disasm', label: 'Désassembleur', icon: Code2 },
+  { id: 'functions', label: 'Fonctions', icon: GitBranch },
   { id: 'strings', label: 'Strings', icon: FileText },
+  { id: 'checksum', label: 'Checksum', icon: Hash },
 ];
 
 function App() {
@@ -30,12 +65,15 @@ function App() {
   const [hexData, setHexData] = useState([]);
   const [hexOffset, setHexOffset] = useState(0);
   const [maps, setMaps] = useState([]);
+  const [knownMaps, setKnownMaps] = useState([]);
   const [selectedMap, setSelectedMap] = useState(null);
   const [mapData, setMapData] = useState(null);
   const [singles, setSingles] = useState([]);
   const [disasmData, setDisasmData] = useState([]);
   const [disasmOffset, setDisasmOffset] = useState(0);
+  const [functions, setFunctions] = useState([]);
   const [strings, setStrings] = useState([]);
+  const [checksums, setChecksums] = useState(null);
 
   // File upload
   const handleFileUpload = async (e) => {
@@ -54,7 +92,13 @@ function App() {
       setFileLoaded(true);
       setStatus('Fichier chargé avec succès!');
       
-      // Load initial hex view
+      // Reset states
+      setMaps([]);
+      setSingles([]);
+      setDisasmData([]);
+      setFunctions([]);
+      setStrings([]);
+      
       loadHexView(0);
     } catch (err) {
       setStatus('Erreur: ' + (err.response?.data?.detail || err.message));
@@ -90,9 +134,13 @@ function App() {
     setLoading(true);
     setStatus('Scan des maps...');
     try {
-      const res = await axios.get(`${API_URL}/api/maps/scan`);
-      setMaps(res.data.maps);
-      setStatus(`${res.data.count} maps détectées`);
+      const [scanned, known] = await Promise.all([
+        axios.get(`${API_URL}/api/maps/scan`),
+        axios.get(`${API_URL}/api/maps/known`)
+      ]);
+      setMaps(scanned.data.maps);
+      setKnownMaps(known.data.maps || []);
+      setStatus(`${scanned.data.count} maps détectées`);
     } catch (err) {
       setStatus('Erreur scan');
     } finally {
@@ -134,6 +182,30 @@ function App() {
     }
   };
 
+  // Apply map operation
+  const applyMapOperation = async (operation, value) => {
+    if (!selectedMap) return;
+    try {
+      const res = await axios.post(`${API_URL}/api/maps/operation`, {
+        offset: selectedMap.offset,
+        rows: selectedMap.rows,
+        cols: selectedMap.cols,
+        operation,
+        value
+      });
+      setMapData(res.data.map);
+      setStatus(`Opération ${operation} appliquée`);
+    } catch (err) {
+      setStatus('Erreur opération');
+    }
+  };
+
+  // Export map CSV
+  const exportMapCSV = () => {
+    if (!selectedMap) return;
+    window.open(`${API_URL}/api/maps/export?offset=${selectedMap.offset}&rows=${selectedMap.rows}&cols=${selectedMap.cols}`, '_blank');
+  };
+
   // Load singles
   const loadSingles = async () => {
     setLoading(true);
@@ -158,6 +230,19 @@ function App() {
     }
   };
 
+  // Load functions
+  const loadFunctions = async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get(`${API_URL}/api/functions`);
+      setFunctions(res.data.functions);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Load strings
   const loadStrings = async () => {
     setLoading(true);
@@ -168,6 +253,16 @@ function App() {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Load checksums
+  const loadChecksums = async () => {
+    try {
+      const res = await axios.get(`${API_URL}/api/checksum`);
+      setChecksums(res.data);
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -185,7 +280,6 @@ function App() {
         loadHexView(hexOffset);
         break;
       case 'maps':
-      case 'maps3d':
         if (maps.length === 0) scanMaps();
         break;
       case 'singles':
@@ -194,10 +288,19 @@ function App() {
       case 'disasm':
         if (disasmData.length === 0) loadDisasm(0);
         break;
+      case 'functions':
+        if (functions.length === 0) loadFunctions();
+        break;
       case 'strings':
         if (strings.length === 0) loadStrings();
         break;
+      case 'checksum':
+        loadChecksums();
+        break;
+      default:
+        break;
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, fileLoaded]);
 
   // Color scale for map values
@@ -205,48 +308,51 @@ function App() {
     if (max === min) return 'rgb(50, 50, 70)';
     const ratio = (value - min) / (max - min);
     
-    // Blue -> Cyan -> Green -> Yellow -> Orange -> Red
-    if (ratio < 0.2) {
-      const t = ratio / 0.2;
-      return `rgb(${Math.round(30 + t * 20)}, ${Math.round(60 + t * 80)}, ${Math.round(150 + t * 50)})`;
-    } else if (ratio < 0.4) {
-      const t = (ratio - 0.2) / 0.2;
-      return `rgb(${Math.round(50 - t * 20)}, ${Math.round(140 + t * 60)}, ${Math.round(200 - t * 50)})`;
-    } else if (ratio < 0.6) {
-      const t = (ratio - 0.4) / 0.2;
-      return `rgb(${Math.round(30 + t * 100)}, ${Math.round(200 - t * 20)}, ${Math.round(150 - t * 100)})`;
-    } else if (ratio < 0.8) {
-      const t = (ratio - 0.6) / 0.2;
-      return `rgb(${Math.round(130 + t * 100)}, ${Math.round(180 - t * 60)}, ${Math.round(50 - t * 30)})`;
+    // Purple gradient theme
+    if (ratio < 0.25) {
+      const t = ratio / 0.25;
+      return `rgb(${Math.round(30 + t * 50)}, ${Math.round(30 + t * 30)}, ${Math.round(80 + t * 70)})`;
+    } else if (ratio < 0.5) {
+      const t = (ratio - 0.25) / 0.25;
+      return `rgb(${Math.round(80 + t * 60)}, ${Math.round(60 - t * 20)}, ${Math.round(150 + t * 30)})`;
+    } else if (ratio < 0.75) {
+      const t = (ratio - 0.5) / 0.25;
+      return `rgb(${Math.round(140 + t * 60)}, ${Math.round(40 + t * 40)}, ${Math.round(180 - t * 30)})`;
     } else {
-      const t = (ratio - 0.8) / 0.2;
-      return `rgb(${Math.round(230 + t * 25)}, ${Math.round(120 - t * 80)}, ${Math.round(20 + t * 20)})`;
+      const t = (ratio - 0.75) / 0.25;
+      return `rgb(${Math.round(200 + t * 40)}, ${Math.round(80 + t * 80)}, ${Math.round(150 - t * 50)})`;
     }
   };
 
   return (
     <div className="h-screen flex flex-col bg-[#0a0a0f]">
       {/* Header */}
-      <header className="h-14 bg-[#12121a] border-b border-[#2d2d3a] flex items-center justify-between px-4">
+      <header className="h-14 bg-gradient-to-r from-[#12121a] to-[#1a1525] border-b border-purple-900/30 flex items-center justify-between px-4">
         <div className="flex items-center gap-3">
-          <Cpu className="w-6 h-6 text-cyan-400" />
-          <h1 className="text-lg font-semibold text-white">ECU Calibration Tool</h1>
-          <span className="text-xs bg-cyan-500/20 text-cyan-400 px-2 py-0.5 rounded">ME7.4.4</span>
+          <AlienLogo className="w-10 h-10" />
+          <div>
+            <h1 className="text-lg font-bold bg-gradient-to-r from-purple-400 to-violet-300 bg-clip-text text-transparent">
+              Alien ECU Engine
+            </h1>
+            <span className="text-[10px] text-purple-400/60">ME7.4.4 / ME7.4.5</span>
+          </div>
         </div>
         
         <div className="flex items-center gap-4">
           {fileInfo && (
             <div className="flex items-center gap-4 text-sm text-gray-400">
               <span className="flex items-center gap-1">
-                <HardDrive className="w-4 h-4" />
+                <HardDrive className="w-4 h-4 text-purple-400" />
                 {fileInfo.size_kb?.toFixed(1)} KB
               </span>
-              <span className="text-cyan-400">{fileInfo.ecu_type}</span>
+              <span className="text-purple-300">{fileInfo.ecu_type}</span>
+              {fileInfo.manufacturer && (
+                <span className="text-purple-400/60">{fileInfo.manufacturer}</span>
+              )}
             </div>
           )}
           
-          {/* Upload button */}
-          <label className="btn btn-primary cursor-pointer">
+          <label className="btn-alien cursor-pointer">
             <Upload className="w-4 h-4" />
             {fileLoaded ? 'Charger autre' : 'Charger .bin / .hex'}
             <input
@@ -254,11 +360,12 @@ function App() {
               accept=".bin,.hex"
               onChange={handleFileUpload}
               className="hidden"
+              data-testid="file-upload-input"
             />
           </label>
           
           {fileLoaded && (
-            <button onClick={downloadFile} className="btn btn-success">
+            <button onClick={downloadFile} className="btn-alien-success" data-testid="download-btn">
               <Download className="w-4 h-4" />
               Télécharger
             </button>
@@ -269,17 +376,18 @@ function App() {
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar */}
-        <aside className="w-48 bg-[#12121a] border-r border-[#2d2d3a] flex flex-col">
+        <aside className="w-52 bg-gradient-to-b from-[#12121a] to-[#0f0f18] border-r border-purple-900/20 flex flex-col">
           <nav className="flex-1 py-2">
             {TABS.map(tab => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 disabled={!fileLoaded && tab.id !== 'hex'}
-                className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition-colors ${
+                data-testid={`tab-${tab.id}`}
+                className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition-all duration-200 ${
                   activeTab === tab.id
-                    ? 'bg-cyan-500/10 text-cyan-400 border-r-2 border-cyan-400'
-                    : 'text-gray-400 hover:bg-[#1a1a25] hover:text-white'
+                    ? 'bg-purple-500/10 text-purple-300 border-r-2 border-purple-500 shadow-lg shadow-purple-500/5'
+                    : 'text-gray-400 hover:bg-purple-500/5 hover:text-purple-200'
                 } ${!fileLoaded && tab.id !== 'hex' ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 <tab.icon className="w-4 h-4" />
@@ -289,10 +397,10 @@ function App() {
           </nav>
           
           {/* Status */}
-          <div className="p-4 border-t border-[#2d2d3a]">
-            <div className="text-xs text-gray-500 mb-1">Status</div>
-            <div className="text-sm text-gray-300 truncate">{status || 'Prêt'}</div>
-            {loading && <div className="spinner mt-2" />}
+          <div className="p-4 border-t border-purple-900/20">
+            <div className="text-xs text-purple-400/50 mb-1">Status</div>
+            <div className="text-sm text-purple-200 truncate">{status || 'Prêt'}</div>
+            {loading && <div className="spinner-alien mt-2" />}
           </div>
         </aside>
 
@@ -300,12 +408,14 @@ function App() {
         <main className="flex-1 overflow-hidden flex flex-col">
           {!fileLoaded ? (
             /* Welcome screen */
-            <div className="flex-1 flex items-center justify-center">
+            <div className="flex-1 flex items-center justify-center bg-gradient-to-br from-[#0a0a0f] via-[#0f0f18] to-[#1a1025]">
               <div className="text-center animate-fadeIn">
-                <Cpu className="w-20 h-20 text-cyan-400 mx-auto mb-6 opacity-50" />
-                <h2 className="text-2xl font-semibold text-white mb-2">ECU Calibration Tool</h2>
-                <p className="text-gray-400 mb-6">Bosch ME7.4.4 / ME7.4.5 - Little Endian 16-bit</p>
-                <label className="btn btn-primary cursor-pointer text-lg px-8 py-3">
+                <AlienLogo className="w-32 h-32 mx-auto mb-6 animate-float" />
+                <h2 className="text-3xl font-bold bg-gradient-to-r from-purple-400 via-violet-400 to-purple-300 bg-clip-text text-transparent mb-2">
+                  Alien ECU Engine
+                </h2>
+                <p className="text-purple-300/60 mb-8">Bosch ME7.4.4 / ME7.4.5 - Little Endian 16-bit</p>
+                <label className="btn-alien-large cursor-pointer" data-testid="upload-btn-main">
                   <Upload className="w-5 h-5" />
                   Charger un fichier .bin ou .hex
                   <input
@@ -315,7 +425,7 @@ function App() {
                     className="hidden"
                   />
                 </label>
-                <div className="mt-8 text-sm text-gray-500">
+                <div className="mt-8 text-sm text-purple-400/40">
                   <p>Supporte: Infineon C166 / ST10</p>
                   <p>PSA TU5JP4 • Peugeot 307 • Citroën</p>
                 </div>
@@ -323,9 +433,7 @@ function App() {
             </div>
           ) : (
             <>
-              {/* Tab content */}
               <div className="flex-1 overflow-hidden p-4">
-                {/* Hex Editor */}
                 {activeTab === 'hex' && (
                   <HexEditor
                     data={hexData}
@@ -336,36 +444,25 @@ function App() {
                   />
                 )}
 
-                {/* Maps 2D */}
                 {activeTab === 'maps' && (
                   <Maps2DView
                     maps={maps}
+                    knownMaps={knownMaps}
                     selectedMap={selectedMap}
                     mapData={mapData}
                     onSelectMap={loadMap}
                     onScan={scanMaps}
                     onEditCell={editMapCell}
+                    onOperation={applyMapOperation}
+                    onExport={exportMapCSV}
                     getColor={getMapCellColor}
                   />
                 )}
 
-                {/* Maps 3D */}
-                {activeTab === 'maps3d' && (
-                  <Maps3DView
-                    maps={maps}
-                    selectedMap={selectedMap}
-                    mapData={mapData}
-                    onSelectMap={loadMap}
-                    onScan={scanMaps}
-                  />
-                )}
-
-                {/* Singles */}
                 {activeTab === 'singles' && (
                   <SinglesView singles={singles} onRefresh={loadSingles} />
                 )}
 
-                {/* Disassembler */}
                 {activeTab === 'disasm' && (
                   <DisasmView
                     data={disasmData}
@@ -375,9 +472,20 @@ function App() {
                   />
                 )}
 
-                {/* Strings */}
+                {activeTab === 'functions' && (
+                  <FunctionsView 
+                    functions={functions} 
+                    onRefresh={loadFunctions}
+                    onGoTo={(offset) => { setActiveTab('disasm'); loadDisasm(offset); }}
+                  />
+                )}
+
                 {activeTab === 'strings' && (
                   <StringsView strings={strings} onRefresh={loadStrings} />
+                )}
+
+                {activeTab === 'checksum' && (
+                  <ChecksumView checksums={checksums} onRefresh={loadChecksums} />
                 )}
               </div>
             </>
@@ -419,20 +527,19 @@ function HexEditor({ data, offset, onOffsetChange, onEdit, fileSize }) {
   };
 
   return (
-    <div className="h-full flex flex-col panel">
-      {/* Toolbar */}
-      <div className="flex items-center gap-4 p-3 border-b border-[#2d2d3a]">
+    <div className="h-full flex flex-col panel-alien" data-testid="hex-editor">
+      <div className="flex items-center gap-4 p-3 border-b border-purple-900/20">
         <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-400">Aller à:</span>
+          <span className="text-sm text-purple-300/60">Aller à:</span>
           <input
             type="text"
             placeholder="0x0000"
             value={goToOffset}
             onChange={(e) => setGoToOffset(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && goTo()}
-            className="input w-24 font-mono text-sm"
+            className="input-alien w-24 font-mono text-sm"
           />
-          <button onClick={goTo} className="btn btn-secondary">
+          <button onClick={goTo} className="btn-alien-sm">
             <Search className="w-4 h-4" />
           </button>
         </div>
@@ -441,31 +548,29 @@ function HexEditor({ data, offset, onOffsetChange, onEdit, fileSize }) {
           <button
             onClick={() => onOffsetChange(Math.max(0, offset - 512))}
             disabled={offset === 0}
-            className="btn btn-secondary"
+            className="btn-alien-sm"
           >
             ← Précédent
           </button>
           <button
             onClick={() => onOffsetChange(Math.min(fileSize - 512, offset + 512))}
             disabled={offset + 512 >= fileSize}
-            className="btn btn-secondary"
+            className="btn-alien-sm"
           >
             Suivant →
           </button>
         </div>
         
-        <span className="text-sm text-gray-400 ml-auto">
-          Offset: <span className="text-cyan-400 font-mono">0x{offset.toString(16).toUpperCase().padStart(4, '0')}</span>
+        <span className="text-sm text-purple-300/60 ml-auto">
+          Offset: <span className="text-purple-300 font-mono">0x{offset.toString(16).toUpperCase().padStart(4, '0')}</span>
           {' - '}
-          <span className="text-cyan-400 font-mono">0x{Math.min(offset + 511, fileSize - 1).toString(16).toUpperCase().padStart(4, '0')}</span>
+          <span className="text-purple-300 font-mono">0x{Math.min(offset + 511, fileSize - 1).toString(16).toUpperCase().padStart(4, '0')}</span>
         </span>
       </div>
 
-      {/* Hex view */}
       <div className="flex-1 overflow-auto p-4 font-mono text-sm">
         <div className="grid gap-1">
-          {/* Header */}
-          <div className="flex text-gray-500 text-xs pb-2 border-b border-[#2d2d3a]">
+          <div className="flex text-purple-400/50 text-xs pb-2 border-b border-purple-900/20">
             <div className="w-20">Offset</div>
             <div className="flex-1 flex">
               {[...Array(16)].map((_, i) => (
@@ -475,10 +580,9 @@ function HexEditor({ data, offset, onOffsetChange, onEdit, fileSize }) {
             <div className="w-36 pl-4">ASCII</div>
           </div>
 
-          {/* Data rows */}
           {data.map((row, idx) => (
-            <div key={idx} className="flex items-center hover:bg-[#1a1a25]">
-              <div className="w-20 text-cyan-400">
+            <div key={idx} className="flex items-center hover:bg-purple-500/5 rounded">
+              <div className="w-20 text-purple-400">
                 {row.offset.toString(16).toUpperCase().padStart(8, '0')}
               </div>
               <div className="flex-1 flex">
@@ -492,12 +596,12 @@ function HexEditor({ data, offset, onOffsetChange, onEdit, fileSize }) {
                         onKeyDown={handleByteEdit}
                         onBlur={() => setEditingByte(null)}
                         autoFocus
-                        className="w-6 bg-cyan-500 text-black text-center rounded px-0"
+                        className="w-6 bg-purple-500 text-black text-center rounded px-0"
                       />
                     ) : (
                       <span
                         onClick={() => handleByteClick(byte.offset, byte.value)}
-                        className="hex-byte"
+                        className="hex-byte-alien"
                       >
                         {byte.value.toString(16).toUpperCase().padStart(2, '0')}
                       </span>
@@ -505,7 +609,7 @@ function HexEditor({ data, offset, onOffsetChange, onEdit, fileSize }) {
                   </div>
                 ))}
               </div>
-              <div className="w-36 pl-4 text-gray-400">
+              <div className="w-36 pl-4 text-purple-300/40">
                 {row.ascii}
               </div>
             </div>
@@ -517,12 +621,14 @@ function HexEditor({ data, offset, onOffsetChange, onEdit, fileSize }) {
 }
 
 /* ============ MAPS 2D VIEW COMPONENT ============ */
-function Maps2DView({ maps, selectedMap, mapData, onSelectMap, onScan, onEditCell, getColor }) {
+function Maps2DView({ maps, knownMaps, selectedMap, mapData, onSelectMap, onScan, onEditCell, onOperation, onExport, getColor }) {
   const [editingCell, setEditingCell] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [customOffset, setCustomOffset] = useState('');
   const [customRows, setCustomRows] = useState('8');
   const [customCols, setCustomCols] = useState('8');
+  const [showTools, setShowTools] = useState(false);
+  const [operationValue, setOperationValue] = useState('');
 
   const handleCellClick = (row, col, value) => {
     setEditingCell({ row, col });
@@ -551,46 +657,60 @@ function Maps2DView({ maps, selectedMap, mapData, onSelectMap, onScan, onEditCel
   };
 
   return (
-    <div className="h-full flex gap-4">
+    <div className="h-full flex gap-4" data-testid="maps-view">
       {/* Maps list */}
-      <div className="w-72 panel flex flex-col">
-        <div className="p-3 border-b border-[#2d2d3a] flex items-center justify-between">
-          <h3 className="font-semibold text-white">Maps détectées</h3>
-          <button onClick={onScan} className="btn btn-secondary text-xs py-1">
+      <div className="w-80 panel-alien flex flex-col">
+        <div className="p-3 border-b border-purple-900/20 flex items-center justify-between">
+          <h3 className="font-semibold text-purple-200">Maps détectées</h3>
+          <button onClick={onScan} className="btn-alien-sm">
             <RefreshCw className="w-3 h-3" />
             Scan
           </button>
         </div>
         
+        {/* Known maps */}
+        {knownMaps.length > 0 && (
+          <div className="p-2 border-b border-purple-900/20">
+            <div className="text-xs text-purple-400/50 mb-2">Maps ME7.4.4 connues:</div>
+            <div className="flex flex-wrap gap-1">
+              {knownMaps.slice(0, 8).map((m, idx) => (
+                <span key={idx} className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">
+                  {m.name}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        
         {/* Custom map input */}
-        <div className="p-3 border-b border-[#2d2d3a] space-y-2">
-          <div className="text-xs text-gray-400">Map manuelle:</div>
+        <div className="p-3 border-b border-purple-900/20 space-y-2">
+          <div className="text-xs text-purple-400/50">Map manuelle:</div>
           <div className="flex gap-2">
             <input
               type="text"
               placeholder="Offset (hex)"
               value={customOffset}
               onChange={(e) => setCustomOffset(e.target.value)}
-              className="input text-xs flex-1 font-mono"
+              className="input-alien text-xs flex-1 font-mono"
             />
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
             <input
               type="number"
               placeholder="Lignes"
               value={customRows}
               onChange={(e) => setCustomRows(e.target.value)}
-              className="input text-xs w-16"
+              className="input-alien text-xs w-16"
             />
-            <span className="text-gray-400">×</span>
+            <span className="text-purple-400/50">×</span>
             <input
               type="number"
               placeholder="Cols"
               value={customCols}
               onChange={(e) => setCustomCols(e.target.value)}
-              className="input text-xs w-16"
+              className="input-alien text-xs w-16"
             />
-            <button onClick={loadCustomMap} className="btn btn-primary text-xs py-1 px-2">
+            <button onClick={loadCustomMap} className="btn-alien-sm px-3">
               OK
             </button>
           </div>
@@ -601,19 +721,19 @@ function Maps2DView({ maps, selectedMap, mapData, onSelectMap, onScan, onEditCel
             <div
               key={idx}
               onClick={() => onSelectMap(map)}
-              className={`p-3 border-b border-[#2d2d3a] cursor-pointer transition-colors ${
+              className={`p-3 border-b border-purple-900/10 cursor-pointer transition-all ${
                 selectedMap?.offset === map.offset
-                  ? 'bg-cyan-500/10 border-l-2 border-l-cyan-400'
-                  : 'hover:bg-[#1a1a25]'
+                  ? 'bg-purple-500/10 border-l-2 border-l-purple-500'
+                  : 'hover:bg-purple-500/5'
               }`}
             >
               <div className="flex items-center justify-between">
-                <span className="font-mono text-cyan-400 text-sm">
+                <span className="font-mono text-purple-400 text-sm">
                   0x{map.offset.toString(16).toUpperCase().padStart(4, '0')}
                 </span>
-                <span className="text-xs text-gray-400">{map.rows}×{map.cols}</span>
+                <span className="text-xs text-purple-300/50">{map.rows}×{map.cols}</span>
               </div>
-              <div className="text-xs text-gray-500 mt-1">
+              <div className="text-xs text-purple-400/40 mt-1">
                 Min: {map.min} | Max: {map.max}
               </div>
             </div>
@@ -622,19 +742,73 @@ function Maps2DView({ maps, selectedMap, mapData, onSelectMap, onScan, onEditCel
       </div>
 
       {/* Map viewer */}
-      <div className="flex-1 panel flex flex-col">
+      <div className="flex-1 panel-alien flex flex-col">
         {mapData ? (
           <>
-            <div className="p-3 border-b border-[#2d2d3a] flex items-center justify-between">
+            <div className="p-3 border-b border-purple-900/20 flex items-center justify-between">
               <div>
-                <h3 className="font-semibold text-white">{selectedMap?.name}</h3>
-                <div className="text-xs text-gray-400">
+                <h3 className="font-semibold text-purple-200">{selectedMap?.name}</h3>
+                <div className="text-xs text-purple-400/50">
                   Offset: 0x{selectedMap?.offset.toString(16).toUpperCase()} | 
                   {selectedMap?.rows}×{selectedMap?.cols} | 
                   Min: {mapData.min} | Max: {mapData.max}
                 </div>
               </div>
+              <div className="flex gap-2">
+                <button onClick={() => setShowTools(!showTools)} className="btn-alien-sm">
+                  <Settings className="w-4 h-4" />
+                  Outils
+                </button>
+                <button onClick={onExport} className="btn-alien-sm">
+                  <FileDown className="w-4 h-4" />
+                  CSV
+                </button>
+              </div>
             </div>
+            
+            {/* Tools panel */}
+            {showTools && (
+              <div className="p-3 border-b border-purple-900/20 bg-purple-500/5">
+                <div className="text-xs text-purple-400/50 mb-2">Opérations sur la map:</div>
+                <div className="flex gap-2 items-center flex-wrap">
+                  <input
+                    type="number"
+                    placeholder="Valeur"
+                    value={operationValue}
+                    onChange={(e) => setOperationValue(e.target.value)}
+                    className="input-alien text-sm w-24"
+                  />
+                  <button 
+                    onClick={() => onOperation('add', parseFloat(operationValue))}
+                    className="btn-alien-sm"
+                    title="Ajouter"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => onOperation('subtract', parseFloat(operationValue))}
+                    className="btn-alien-sm"
+                    title="Soustraire"
+                  >
+                    <Minus className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => onOperation('multiply', parseFloat(operationValue))}
+                    className="btn-alien-sm"
+                    title="Multiplier"
+                  >
+                    <X className="w-4 h-4" />×
+                  </button>
+                  <button 
+                    onClick={() => onOperation('percent', parseFloat(operationValue))}
+                    className="btn-alien-sm"
+                    title="Pourcentage (+/-)"
+                  >
+                    <Percent className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
             
             <div className="flex-1 overflow-auto p-4">
               <div
@@ -647,7 +821,7 @@ function Maps2DView({ maps, selectedMap, mapData, onSelectMap, onScan, onEditCel
                   row.map((value, ci) => (
                     <div
                       key={`${ri}-${ci}`}
-                      className="map-cell h-8"
+                      className="map-cell-alien h-8"
                       style={{ background: getColor(value, mapData.min, mapData.max) }}
                       onClick={() => handleCellClick(ri, ci, value)}
                     >
@@ -659,9 +833,10 @@ function Maps2DView({ maps, selectedMap, mapData, onSelectMap, onScan, onEditCel
                           onKeyDown={handleCellEdit}
                           onBlur={() => setEditingCell(null)}
                           autoFocus
+                          className="w-full h-full bg-transparent text-center text-white"
                         />
                       ) : (
-                        <span className={value > (mapData.max + mapData.min) / 2 ? 'text-black' : 'text-white'}>
+                        <span className={value > (mapData.max + mapData.min) / 2 ? 'text-white' : 'text-white'}>
                           {value}
                         </span>
                       )}
@@ -672,7 +847,7 @@ function Maps2DView({ maps, selectedMap, mapData, onSelectMap, onScan, onEditCel
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-gray-500">
+          <div className="flex-1 flex items-center justify-center text-purple-400/40">
             <div className="text-center">
               <Grid3X3 className="w-16 h-16 mx-auto mb-4 opacity-30" />
               <p>Sélectionnez une map dans la liste</p>
@@ -685,150 +860,48 @@ function Maps2DView({ maps, selectedMap, mapData, onSelectMap, onScan, onEditCel
   );
 }
 
-/* ============ MAPS 3D VIEW COMPONENT ============ */
-function Maps3DView({ maps, selectedMap, mapData, onSelectMap, onScan }) {
-  return (
-    <div className="h-full flex gap-4">
-      {/* Maps list (same as 2D) */}
-      <div className="w-72 panel flex flex-col">
-        <div className="p-3 border-b border-[#2d2d3a] flex items-center justify-between">
-          <h3 className="font-semibold text-white">Maps 3D</h3>
-          <button onClick={onScan} className="btn btn-secondary text-xs py-1">
-            <RefreshCw className="w-3 h-3" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-auto">
-          {maps.slice(0, 20).map((map, idx) => (
-            <div
-              key={idx}
-              onClick={() => onSelectMap(map)}
-              className={`p-3 border-b border-[#2d2d3a] cursor-pointer transition-colors ${
-                selectedMap?.offset === map.offset
-                  ? 'bg-cyan-500/10 border-l-2 border-l-cyan-400'
-                  : 'hover:bg-[#1a1a25]'
-              }`}
-            >
-              <span className="font-mono text-cyan-400 text-sm">
-                0x{map.offset.toString(16).toUpperCase()}
-              </span>
-              <span className="text-xs text-gray-400 ml-2">{map.rows}×{map.cols}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* 3D View */}
-      <div className="flex-1 panel flex flex-col">
-        {mapData ? (
-          <>
-            <div className="p-3 border-b border-[#2d2d3a]">
-              <h3 className="font-semibold text-white">{selectedMap?.name} - Vue 3D</h3>
-            </div>
-            <div className="flex-1 relative bg-[#0a0a0f]">
-              <Simple3DView data={mapData.data} min={mapData.min} max={mapData.max} />
-            </div>
-          </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-gray-500">
-            <div className="text-center">
-              <Box className="w-16 h-16 mx-auto mb-4 opacity-30" />
-              <p>Sélectionnez une map pour la vue 3D</p>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* Simple 3D visualization using CSS transforms */
-function Simple3DView({ data, min, max }) {
-  const rows = data.length;
-  const cols = data[0]?.length || 0;
-  
-  const getHeight = (value) => {
-    if (max === min) return 50;
-    return 10 + ((value - min) / (max - min)) * 150;
-  };
-
-  const getColor = (value) => {
-    if (max === min) return '#3b82f6';
-    const ratio = (value - min) / (max - min);
-    if (ratio < 0.5) {
-      return `rgb(${Math.round(ratio * 2 * 255)}, ${Math.round(100 + ratio * 155)}, ${Math.round(255 - ratio * 155)})`;
-    } else {
-      return `rgb(255, ${Math.round(255 - (ratio - 0.5) * 2 * 200)}, ${Math.round((1 - ratio) * 100)})`;
-    }
-  };
-
-  return (
-    <div className="w-full h-full flex items-center justify-center overflow-hidden">
-      <div 
-        className="relative"
-        style={{
-          transform: 'rotateX(55deg) rotateZ(-45deg)',
-          transformStyle: 'preserve-3d',
-        }}
-      >
-        {data.map((row, ri) =>
-          row.map((value, ci) => (
-            <div
-              key={`${ri}-${ci}`}
-              className="absolute transition-all duration-200"
-              style={{
-                width: '20px',
-                height: `${getHeight(value)}px`,
-                left: `${ci * 22}px`,
-                top: `${ri * 22}px`,
-                background: `linear-gradient(180deg, ${getColor(value)} 0%, ${getColor(value)}88 100%)`,
-                transformOrigin: 'bottom',
-                boxShadow: '2px 2px 4px rgba(0,0,0,0.3)',
-              }}
-            />
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
 /* ============ SINGLES VIEW COMPONENT ============ */
 function SinglesView({ singles, onRefresh }) {
   const [filter, setFilter] = useState('');
   
   const filtered = singles.filter(s => 
     s.name.toLowerCase().includes(filter.toLowerCase()) ||
-    s.offset.toString(16).includes(filter.toLowerCase())
+    s.offset.toString(16).includes(filter.toLowerCase()) ||
+    (s.description && s.description.toLowerCase().includes(filter.toLowerCase()))
   );
 
   return (
-    <div className="h-full panel flex flex-col">
-      <div className="p-3 border-b border-[#2d2d3a] flex items-center gap-4">
-        <h3 className="font-semibold text-white">Valeurs Singles</h3>
+    <div className="h-full panel-alien flex flex-col" data-testid="singles-view">
+      <div className="p-3 border-b border-purple-900/20 flex items-center gap-4">
+        <h3 className="font-semibold text-purple-200">Valeurs Singles</h3>
         <input
           type="text"
           placeholder="Filtrer..."
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="input flex-1 max-w-xs"
+          className="input-alien flex-1 max-w-xs"
         />
-        <button onClick={onRefresh} className="btn btn-secondary">
+        <button onClick={onRefresh} className="btn-alien-sm">
           <RefreshCw className="w-4 h-4" />
         </button>
-        <span className="text-sm text-gray-400">{filtered.length} valeurs</span>
+        <span className="text-sm text-purple-400/50">{filtered.length} valeurs</span>
       </div>
       
       <div className="flex-1 overflow-auto">
         <div className="grid grid-cols-4 gap-2 p-4">
           {filtered.slice(0, 200).map((s, idx) => (
-            <div key={idx} className="bg-[#1a1a25] rounded p-3 hover:bg-[#252535] transition-colors">
-              <div className="text-xs text-cyan-400 font-mono">
+            <div key={idx} className="bg-purple-500/5 border border-purple-900/20 rounded-lg p-3 hover:bg-purple-500/10 transition-colors">
+              <div className="text-xs text-purple-400 font-mono">
                 0x{s.offset.toString(16).toUpperCase().padStart(4, '0')}
               </div>
-              <div className="text-lg font-semibold text-white mt-1">{s.value}</div>
-              <div className="text-xs text-gray-500">
+              <div className="text-lg font-semibold text-purple-100 mt-1">{s.value}</div>
+              <div className="text-xs text-purple-400/50">
                 0x{s.value.toString(16).toUpperCase().padStart(4, '0')}
+                {s.unit && <span className="ml-1">{s.unit}</span>}
               </div>
+              {s.description && (
+                <div className="text-xs text-purple-300/40 mt-1 truncate">{s.description}</div>
+              )}
             </div>
           ))}
         </div>
@@ -849,9 +922,9 @@ function DisasmView({ data, offset, onOffsetChange, fileSize }) {
   };
 
   return (
-    <div className="h-full panel flex flex-col">
-      <div className="p-3 border-b border-[#2d2d3a] flex items-center gap-4">
-        <h3 className="font-semibold text-white">Désassembleur C166/ST10</h3>
+    <div className="h-full panel-alien flex flex-col" data-testid="disasm-view">
+      <div className="p-3 border-b border-purple-900/20 flex items-center gap-4">
+        <h3 className="font-semibold text-purple-200">Désassembleur C166/ST10</h3>
         <div className="flex items-center gap-2">
           <input
             type="text"
@@ -859,22 +932,22 @@ function DisasmView({ data, offset, onOffsetChange, fileSize }) {
             value={goToOffset}
             onChange={(e) => setGoToOffset(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && goTo()}
-            className="input w-24 font-mono text-sm"
+            className="input-alien w-24 font-mono text-sm"
           />
-          <button onClick={goTo} className="btn btn-secondary">
+          <button onClick={goTo} className="btn-alien-sm">
             <Search className="w-4 h-4" />
           </button>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => onOffsetChange(Math.max(0, offset - 100))}
-            className="btn btn-secondary"
+            className="btn-alien-sm"
           >
             ← Prev
           </button>
           <button
             onClick={() => onOffsetChange(offset + 100)}
-            className="btn btn-secondary"
+            className="btn-alien-sm"
           >
             Next →
           </button>
@@ -882,22 +955,87 @@ function DisasmView({ data, offset, onOffsetChange, fileSize }) {
       </div>
       
       <div className="flex-1 overflow-auto">
-        {/* Header */}
-        <div className="disasm-line bg-[#1a1a25] sticky top-0 text-xs text-gray-500 font-semibold">
+        <div className="disasm-header-alien">
           <div>OFFSET</div>
           <div>BYTES</div>
           <div>MNEMONIC</div>
           <div>OPERANDS</div>
+          <div>COMMENT</div>
         </div>
         
         {data.map((inst, idx) => (
-          <div key={idx} className="disasm-line">
-            <div className="disasm-offset">
+          <div 
+            key={idx} 
+            className={`disasm-line-alien ${inst.is_branch ? 'bg-purple-500/5' : ''}`}
+          >
+            <div className="disasm-offset-alien">
               {inst.offset.toString(16).toUpperCase().padStart(8, '0')}
             </div>
-            <div className="disasm-bytes">{inst.bytes}</div>
-            <div className="disasm-mnemonic">{inst.mnemonic}</div>
-            <div className="disasm-operands">{inst.operands}</div>
+            <div className="disasm-bytes-alien">{inst.bytes}</div>
+            <div className={`disasm-mnemonic-alien ${inst.is_branch ? 'text-yellow-400' : ''}`}>
+              {inst.mnemonic}
+            </div>
+            <div className="disasm-operands-alien">
+              {inst.is_branch && inst.branch_target >= 0 ? (
+                <span 
+                  className="cursor-pointer hover:text-purple-300"
+                  onClick={() => onOffsetChange(inst.branch_target)}
+                >
+                  {inst.operands}
+                </span>
+              ) : inst.operands}
+            </div>
+            <div className="disasm-comment-alien">{inst.comment}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ============ FUNCTIONS VIEW COMPONENT ============ */
+function FunctionsView({ functions, onRefresh, onGoTo }) {
+  const [filter, setFilter] = useState('');
+  
+  const filtered = functions.filter(f => 
+    f.name.toLowerCase().includes(filter.toLowerCase()) ||
+    f.offset.toString(16).includes(filter.toLowerCase())
+  );
+
+  return (
+    <div className="h-full panel-alien flex flex-col" data-testid="functions-view">
+      <div className="p-3 border-b border-purple-900/20 flex items-center gap-4">
+        <h3 className="font-semibold text-purple-200">Fonctions détectées</h3>
+        <input
+          type="text"
+          placeholder="Filtrer..."
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="input-alien flex-1 max-w-xs"
+        />
+        <button onClick={onRefresh} className="btn-alien-sm">
+          <RefreshCw className="w-4 h-4" />
+        </button>
+        <span className="text-sm text-purple-400/50">{filtered.length} fonctions</span>
+      </div>
+      
+      <div className="flex-1 overflow-auto">
+        {filtered.map((f, idx) => (
+          <div 
+            key={idx} 
+            className="flex items-center justify-between p-3 border-b border-purple-900/10 hover:bg-purple-500/5 cursor-pointer"
+            onClick={() => onGoTo(f.offset)}
+          >
+            <div className="flex items-center gap-3">
+              <GitBranch className="w-4 h-4 text-purple-400" />
+              <div>
+                <div className="font-mono text-purple-300">{f.name}</div>
+                <div className="text-xs text-purple-400/50">
+                  Offset: 0x{f.offset.toString(16).toUpperCase()} | Size: {f.size} bytes
+                </div>
+              </div>
+            </div>
+            <Target className="w-4 h-4 text-purple-400/50" />
           </div>
         ))}
       </div>
@@ -914,31 +1052,71 @@ function StringsView({ strings, onRefresh }) {
   );
 
   return (
-    <div className="h-full panel flex flex-col">
-      <div className="p-3 border-b border-[#2d2d3a] flex items-center gap-4">
-        <h3 className="font-semibold text-white">Strings détectées</h3>
+    <div className="h-full panel-alien flex flex-col" data-testid="strings-view">
+      <div className="p-3 border-b border-purple-900/20 flex items-center gap-4">
+        <h3 className="font-semibold text-purple-200">Strings détectées</h3>
         <input
           type="text"
           placeholder="Rechercher..."
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="input flex-1 max-w-xs"
+          className="input-alien flex-1 max-w-xs"
         />
-        <button onClick={onRefresh} className="btn btn-secondary">
+        <button onClick={onRefresh} className="btn-alien-sm">
           <RefreshCw className="w-4 h-4" />
         </button>
-        <span className="text-sm text-gray-400">{filtered.length} strings</span>
+        <span className="text-sm text-purple-400/50">{filtered.length} strings</span>
       </div>
       
       <div className="flex-1 overflow-auto">
         {filtered.map((s, idx) => (
-          <div key={idx} className="string-item">
-            <div className="text-cyan-400">
+          <div key={idx} className="string-item-alien">
+            <div className="text-purple-400">
               0x{s.offset.toString(16).toUpperCase().padStart(4, '0')}
             </div>
-            <div className="text-white truncate">{s.text}</div>
+            <div className="text-purple-100 truncate font-mono">{s.text}</div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/* ============ CHECKSUM VIEW COMPONENT ============ */
+function ChecksumView({ checksums, onRefresh }) {
+  if (!checksums) {
+    return (
+      <div className="h-full panel-alien flex items-center justify-center">
+        <div className="spinner-alien" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full panel-alien flex flex-col" data-testid="checksum-view">
+      <div className="p-3 border-b border-purple-900/20 flex items-center justify-between">
+        <h3 className="font-semibold text-purple-200">Checksums</h3>
+        <button onClick={onRefresh} className="btn-alien-sm">
+          <RefreshCw className="w-4 h-4" />
+        </button>
+      </div>
+      
+      <div className="flex-1 overflow-auto p-4">
+        <div className="grid grid-cols-2 gap-4">
+          {Object.entries(checksums).map(([key, value]) => (
+            <div key={key} className="bg-purple-500/5 border border-purple-900/20 rounded-lg p-4">
+              <div className="text-sm text-purple-400/60 uppercase">{key.replace(/_/g, ' ')}</div>
+              <div className="text-xl font-mono text-purple-200 mt-1">
+                {typeof value === 'number' ? `0x${value.toString(16).toUpperCase()}` : value}
+              </div>
+              {typeof value === 'number' && (
+                <div className="text-xs text-purple-400/40 mt-1">
+                  Decimal: {value}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
