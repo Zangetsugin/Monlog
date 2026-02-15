@@ -270,6 +270,12 @@ async def get_map(req: MapRequest):
         raise HTTPException(status_code=400, detail="No file loaded")
     
     m = parser.get_map_at_offset(req.offset, req.rows, req.cols)
+    
+    # Detect axes automatically
+    axes_info = {"x_axis": None, "y_axis": None}
+    if axis_detector:
+        axes_info = axis_detector.scan_for_axes(req.offset, req.rows, req.cols)
+    
     return {
         "offset": m.offset,
         "rows": m.rows,
@@ -278,7 +284,11 @@ async def get_map(req: MapRequest):
         "min": m.min_val,
         "max": m.max_val,
         "avg": m.avg_val,
-        "data": m.data
+        "data": m.data,
+        "x_axis": axes_info.get("x_axis"),
+        "y_axis": axes_info.get("y_axis"),
+        "x_axis_type": axes_info.get("x_axis_type"),
+        "y_axis_type": axes_info.get("y_axis_type")
     }
 
 @app.post("/api/maps/edit")
