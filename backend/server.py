@@ -85,7 +85,7 @@ async def status():
 
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
-    global current_file, current_filename, parser, disasm
+    global current_file, current_filename, parser, disasm, axis_detector
     
     content = await file.read()
     
@@ -97,6 +97,11 @@ async def upload_file(file: UploadFile = File(...)):
     current_filename = file.filename
     parser = ME7Parser(content)
     disasm = C166Disassembler(content)
+    axis_detector = AxisDetector(content)
+    
+    # Auto-load ME7.4.4 PSA definition if detected
+    if parser.ecu_info.get("type") == "Bosch ME7.4.4":
+        definitions_mgr.load_definition("ME7.4.4 PSA TU5JP4")
     
     return {
         "success": True,
