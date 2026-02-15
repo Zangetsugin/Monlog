@@ -32,6 +32,8 @@ current_file: Optional[bytes] = None
 current_filename: str = ""
 parser: Optional[ME7Parser] = None
 disasm: Optional[C166Disassembler] = None
+definitions_mgr: DefinitionsManager = DefinitionsManager()
+axis_detector: Optional[AxisDetector] = None
 
 # Models
 class MapRequest(BaseModel):
