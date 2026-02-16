@@ -79,3 +79,7 @@ agenthub/agents/youtube/db
 # Mobile development
 android-sdk/ alien-ecu-desktop/node_modules/electron/dist/electron
 alien-ecu-desktop/node_modules/electron/dist/electron
+-e 
+# Environment files
+*.env
+*.env.*
