@@ -1,11 +1,12 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import axios from 'axios';
 import {
   Upload, FileCode, Table2, Binary, Code2, FileText,
   Download, RefreshCw, Search, Settings, ChevronRight,
   Cpu, HardDrive, Gauge, Layers, Eye, Edit3, Save,
   ZoomIn, ZoomOut, Grid3X3, BarChart3, Box, Plus, Minus,
-  Percent, X, Check, FileDown, Hash, Target, GitBranch
+  Percent, X, Check, FileDown, Hash, Target, GitBranch,
+  GripVertical, HelpCircle, FileUp, Pencil
 } from 'lucide-react';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL || '';
@@ -13,9 +14,7 @@ const API_URL = process.env.REACT_APP_BACKEND_URL || '';
 // Alien Logo SVG Component
 const AlienLogo = ({ className = "w-8 h-8" }) => (
   <svg viewBox="0 0 100 100" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
-    {/* Chip body */}
     <rect x="20" y="25" width="60" height="50" rx="5" fill="#1a1a2e" stroke="#8b5cf6" strokeWidth="2"/>
-    {/* Chip pins */}
     <rect x="25" y="15" width="4" height="12" fill="#8b5cf6"/>
     <rect x="35" y="15" width="4" height="12" fill="#8b5cf6"/>
     <rect x="45" y="15" width="4" height="12" fill="#8b5cf6"/>
@@ -32,16 +31,74 @@ const AlienLogo = ({ className = "w-8 h-8" }) => (
     <rect x="78" y="35" width="12" height="4" fill="#8b5cf6"/>
     <rect x="78" y="45" width="12" height="4" fill="#8b5cf6"/>
     <rect x="78" y="55" width="12" height="4" fill="#8b5cf6"/>
-    {/* Alien head */}
     <ellipse cx="50" cy="48" rx="18" ry="20" fill="#a855f7"/>
-    {/* Alien eyes */}
     <ellipse cx="42" cy="45" rx="6" ry="8" fill="#0f0f1a"/>
     <ellipse cx="58" cy="45" rx="6" ry="8" fill="#0f0f1a"/>
-    {/* Eye shine */}
     <ellipse cx="40" cy="43" rx="2" ry="3" fill="#c4b5fd"/>
     <ellipse cx="56" cy="43" rx="2" ry="3" fill="#c4b5fd"/>
   </svg>
 );
+
+// Resizable Panel Component
+const ResizablePanel = ({ children, defaultWidth, minWidth = 200, maxWidth = 600, side = 'left' }) => {
+  const [width, setWidth] = useState(defaultWidth);
+  const [isResizing, setIsResizing] = useState(false);
+  const panelRef = useRef(null);
+
+  const startResize = useCallback((e) => {
+    setIsResizing(true);
+    e.preventDefault();
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isResizing) return;
+      
+      const panel = panelRef.current;
+      if (!panel) return;
+      
+      const rect = panel.getBoundingClientRect();
+      let newWidth;
+      
+      if (side === 'left') {
+        newWidth = e.clientX - rect.left;
+      } else {
+        newWidth = rect.right - e.clientX;
+      }
+      
+      newWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
+      setWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing, minWidth, maxWidth, side]);
+
+  return (
+    <div ref={panelRef} className="relative flex" style={{ width: `${width}px`, minWidth: `${minWidth}px` }}>
+      <div className="flex-1 overflow-hidden">
+        {children}
+      </div>
+      <div
+        className={`absolute top-0 ${side === 'left' ? 'right-0' : 'left-0'} w-2 h-full cursor-col-resize hover:bg-purple-500/30 transition-colors flex items-center justify-center group z-10`}
+        onMouseDown={startResize}
+      >
+        <GripVertical className="w-3 h-3 text-purple-500/50 group-hover:text-purple-400" />
+      </div>
+    </div>
+  );
+};
 
 // Tabs configuration
 const TABS = [
@@ -60,6 +117,7 @@ function App() {
   const [fileInfo, setFileInfo] = useState(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
+  const [showHelp, setShowHelp] = useState(false);
 
   // Data states
   const [hexData, setHexData] = useState([]);
@@ -74,11 +132,18 @@ function App() {
   const [functions, setFunctions] = useState([]);
   const [strings, setStrings] = useState([]);
   const [checksums, setChecksums] = useState(null);
+  const [xdfMaps, setXdfMaps] = useState([]);
 
   // File upload
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+
+    // Check if XDF file
+    if (file.name.toLowerCase().endsWith('.xdf')) {
+      handleXdfImport(file);
+      return;
+    }
 
     setLoading(true);
     setStatus('Chargement du fichier...');
@@ -92,7 +157,6 @@ function App() {
       setFileLoaded(true);
       setStatus('Fichier chargé avec succès!');
       
-      // Reset states
       setMaps([]);
       setSingles([]);
       setDisasmData([]);
@@ -102,6 +166,46 @@ function App() {
       loadHexView(0);
     } catch (err) {
       setStatus('Erreur: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // XDF Import
+  const handleXdfImport = async (file) => {
+    setLoading(true);
+    setStatus('Import XDF...');
+    
+    try {
+      const text = await file.text();
+      const parser = new DOMParser();
+      const xml = parser.parseFromString(text, 'text/xml');
+      
+      const tables = xml.querySelectorAll('XDFTABLE');
+      const importedMaps = [];
+      
+      tables.forEach((table) => {
+        const title = table.querySelector('title')?.textContent || 'Unknown';
+        const address = table.querySelector('XDFAXIS[id="z"] EMBEDDEDDATA')?.getAttribute('mmedaddress');
+        const rows = parseInt(table.querySelector('XDFAXIS[id="y"]')?.getAttribute('indexcount') || '1');
+        const cols = parseInt(table.querySelector('XDFAXIS[id="x"]')?.getAttribute('indexcount') || '1');
+        
+        if (address) {
+          importedMaps.push({
+            name: title,
+            offset: parseInt(address, 16),
+            rows: rows || 8,
+            cols: cols || 8,
+            description: `Imported from XDF`,
+            category: 'XDF Import'
+          });
+        }
+      });
+      
+      setXdfMaps(importedMaps);
+      setStatus(`${importedMaps.length} maps importées depuis XDF`);
+    } catch (err) {
+      setStatus('Erreur import XDF: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -138,9 +242,11 @@ function App() {
         axios.get(`${API_URL}/api/maps/scan`),
         axios.get(`${API_URL}/api/maps/known`)
       ]);
-      setMaps(scanned.data.maps);
+      // Merge with XDF maps
+      const allMaps = [...scanned.data.maps, ...xdfMaps];
+      setMaps(allMaps);
       setKnownMaps(known.data.maps || []);
-      setStatus(`${scanned.data.count} maps détectées`);
+      setStatus(`${allMaps.length} maps détectées`);
     } catch (err) {
       setStatus('Erreur scan');
     } finally {
@@ -176,7 +282,7 @@ function App() {
         cols: selectedMap.cols
       });
       loadMap(selectedMap);
-      setStatus(`Cellule [${row},${col}] modifiée`);
+      setStatus(`Cellule [${row},${col}] = ${value}`);
     } catch (err) {
       setStatus('Erreur modification');
     }
@@ -276,29 +382,14 @@ function App() {
     if (!fileLoaded) return;
     
     switch (activeTab) {
-      case 'hex':
-        loadHexView(hexOffset);
-        break;
-      case 'maps':
-        if (maps.length === 0) scanMaps();
-        break;
-      case 'singles':
-        if (singles.length === 0) loadSingles();
-        break;
-      case 'disasm':
-        if (disasmData.length === 0) loadDisasm(0);
-        break;
-      case 'functions':
-        if (functions.length === 0) loadFunctions();
-        break;
-      case 'strings':
-        if (strings.length === 0) loadStrings();
-        break;
-      case 'checksum':
-        loadChecksums();
-        break;
-      default:
-        break;
+      case 'hex': loadHexView(hexOffset); break;
+      case 'maps': if (maps.length === 0) scanMaps(); break;
+      case 'singles': if (singles.length === 0) loadSingles(); break;
+      case 'disasm': if (disasmData.length === 0) loadDisasm(0); break;
+      case 'functions': if (functions.length === 0) loadFunctions(); break;
+      case 'strings': if (strings.length === 0) loadStrings(); break;
+      case 'checksum': loadChecksums(); break;
+      default: break;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, fileLoaded]);
@@ -308,7 +399,6 @@ function App() {
     if (max === min) return 'rgb(50, 50, 70)';
     const ratio = (value - min) / (max - min);
     
-    // Purple gradient theme
     if (ratio < 0.25) {
       const t = ratio / 0.25;
       return `rgb(${Math.round(30 + t * 50)}, ${Math.round(30 + t * 30)}, ${Math.round(80 + t * 70)})`;
@@ -352,7 +442,28 @@ function App() {
             </div>
           )}
           
-          <label className="btn-alien cursor-pointer">
+          {/* Help button */}
+          <button 
+            onClick={() => setShowHelp(!showHelp)} 
+            className="btn-alien-sm"
+            title="Aide"
+          >
+            <HelpCircle className="w-4 h-4" />
+          </button>
+          
+          {/* XDF Import */}
+          <label className="btn-alien-sm cursor-pointer" title="Importer XDF TunerPro">
+            <FileUp className="w-4 h-4" />
+            XDF
+            <input
+              type="file"
+              accept=".xdf"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+          </label>
+          
+          <label className="btn-alien cursor-pointer" data-testid="upload-btn">
             <Upload className="w-4 h-4" />
             {fileLoaded ? 'Charger autre' : 'Charger .bin / .hex'}
             <input
@@ -360,18 +471,37 @@ function App() {
               accept=".bin,.hex"
               onChange={handleFileUpload}
               className="hidden"
-              data-testid="file-upload-input"
             />
           </label>
           
           {fileLoaded && (
             <button onClick={downloadFile} className="btn-alien-success" data-testid="download-btn">
               <Download className="w-4 h-4" />
-              Télécharger
+              Sauvegarder
             </button>
           )}
         </div>
       </header>
+
+      {/* Help Modal */}
+      {showHelp && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowHelp(false)}>
+          <div className="bg-[#12121a] border border-purple-500/30 rounded-lg p-6 max-w-lg" onClick={e => e.stopPropagation()}>
+            <h2 className="text-xl font-bold text-purple-300 mb-4">Guide d'utilisation</h2>
+            <div className="space-y-3 text-sm text-purple-200/80">
+              <p><strong className="text-purple-400">📁 Charger un fichier:</strong> Cliquez sur "Charger .bin" et sélectionnez votre dump ECU</p>
+              <p><strong className="text-purple-400">📊 Éditer une map:</strong> Dans "Maps 2D", cliquez sur une cellule pour l'éditer. Entrez la valeur et appuyez Entrée.</p>
+              <p><strong className="text-purple-400">🔧 Outils de map:</strong> Utilisez les boutons +/-/×/% pour modifier toute la map d'un coup</p>
+              <p><strong className="text-purple-400">📥 Import XDF:</strong> Importez vos définitions TunerPro (.xdf) pour avoir les maps pré-définies</p>
+              <p><strong className="text-purple-400">💾 Sauvegarder:</strong> Cliquez "Sauvegarder" pour télécharger le fichier modifié</p>
+              <p><strong className="text-purple-400">↔️ Redimensionner:</strong> Glissez les bordures des panneaux pour ajuster leur taille</p>
+            </div>
+            <button onClick={() => setShowHelp(false)} className="btn-alien mt-4 w-full justify-center">
+              Compris !
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
@@ -396,6 +526,15 @@ function App() {
             ))}
           </nav>
           
+          {/* XDF Maps indicator */}
+          {xdfMaps.length > 0 && (
+            <div className="px-4 py-2 border-t border-purple-900/20">
+              <div className="text-xs text-green-400">
+                ✓ {xdfMaps.length} maps XDF chargées
+              </div>
+            </div>
+          )}
+          
           {/* Status */}
           <div className="p-4 border-t border-purple-900/20">
             <div className="text-xs text-purple-400/50 mb-1">Status</div>
@@ -407,7 +546,6 @@ function App() {
         {/* Content area */}
         <main className="flex-1 overflow-hidden flex flex-col">
           {!fileLoaded ? (
-            /* Welcome screen */
             <div className="flex-1 flex items-center justify-center bg-gradient-to-br from-[#0a0a0f] via-[#0f0f18] to-[#1a1025]">
               <div className="text-center animate-fadeIn">
                 <AlienLogo className="w-32 h-32 mx-auto mb-6 animate-float" />
@@ -415,16 +553,18 @@ function App() {
                   Alien ECU Engine
                 </h2>
                 <p className="text-purple-300/60 mb-8">Bosch ME7.4.4 / ME7.4.5 - Little Endian 16-bit</p>
-                <label className="btn-alien-large cursor-pointer" data-testid="upload-btn-main">
-                  <Upload className="w-5 h-5" />
-                  Charger un fichier .bin ou .hex
-                  <input
-                    type="file"
-                    accept=".bin,.hex"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
-                </label>
+                <div className="flex gap-4 justify-center">
+                  <label className="btn-alien-large cursor-pointer">
+                    <Upload className="w-5 h-5" />
+                    Charger .bin / .hex
+                    <input type="file" accept=".bin,.hex" onChange={handleFileUpload} className="hidden" />
+                  </label>
+                  <label className="btn-alien cursor-pointer">
+                    <FileUp className="w-5 h-5" />
+                    Importer XDF
+                    <input type="file" accept=".xdf" onChange={handleFileUpload} className="hidden" />
+                  </label>
+                </div>
                 <div className="mt-8 text-sm text-purple-400/40">
                   <p>Supporte: Infineon C166 / ST10</p>
                   <p>PSA TU5JP4 • Peugeot 307 • Citroën</p>
@@ -432,63 +572,56 @@ function App() {
               </div>
             </div>
           ) : (
-            <>
-              <div className="flex-1 overflow-hidden p-4">
-                {activeTab === 'hex' && (
-                  <HexEditor
-                    data={hexData}
-                    offset={hexOffset}
-                    onOffsetChange={loadHexView}
-                    onEdit={editHexByte}
-                    fileSize={fileInfo?.size || 65536}
-                  />
-                )}
-
-                {activeTab === 'maps' && (
-                  <Maps2DView
-                    maps={maps}
-                    knownMaps={knownMaps}
-                    selectedMap={selectedMap}
-                    mapData={mapData}
-                    onSelectMap={loadMap}
-                    onScan={scanMaps}
-                    onEditCell={editMapCell}
-                    onOperation={applyMapOperation}
-                    onExport={exportMapCSV}
-                    getColor={getMapCellColor}
-                  />
-                )}
-
-                {activeTab === 'singles' && (
-                  <SinglesView singles={singles} onRefresh={loadSingles} />
-                )}
-
-                {activeTab === 'disasm' && (
-                  <DisasmView
-                    data={disasmData}
-                    offset={disasmOffset}
-                    onOffsetChange={loadDisasm}
-                    fileSize={fileInfo?.size || 65536}
-                  />
-                )}
-
-                {activeTab === 'functions' && (
-                  <FunctionsView 
-                    functions={functions} 
-                    onRefresh={loadFunctions}
-                    onGoTo={(offset) => { setActiveTab('disasm'); loadDisasm(offset); }}
-                  />
-                )}
-
-                {activeTab === 'strings' && (
-                  <StringsView strings={strings} onRefresh={loadStrings} />
-                )}
-
-                {activeTab === 'checksum' && (
-                  <ChecksumView checksums={checksums} onRefresh={loadChecksums} />
-                )}
-              </div>
-            </>
+            <div className="flex-1 overflow-hidden p-4">
+              {activeTab === 'hex' && (
+                <HexEditor
+                  data={hexData}
+                  offset={hexOffset}
+                  onOffsetChange={loadHexView}
+                  onEdit={editHexByte}
+                  fileSize={fileInfo?.size || 65536}
+                />
+              )}
+              {activeTab === 'maps' && (
+                <Maps2DView
+                  maps={maps}
+                  knownMaps={knownMaps}
+                  xdfMaps={xdfMaps}
+                  selectedMap={selectedMap}
+                  mapData={mapData}
+                  onSelectMap={loadMap}
+                  onScan={scanMaps}
+                  onEditCell={editMapCell}
+                  onOperation={applyMapOperation}
+                  onExport={exportMapCSV}
+                  getColor={getMapCellColor}
+                />
+              )}
+              {activeTab === 'singles' && (
+                <SinglesView singles={singles} onRefresh={loadSingles} />
+              )}
+              {activeTab === 'disasm' && (
+                <DisasmView
+                  data={disasmData}
+                  offset={disasmOffset}
+                  onOffsetChange={loadDisasm}
+                  fileSize={fileInfo?.size || 65536}
+                />
+              )}
+              {activeTab === 'functions' && (
+                <FunctionsView 
+                  functions={functions} 
+                  onRefresh={loadFunctions}
+                  onGoTo={(offset) => { setActiveTab('disasm'); loadDisasm(offset); }}
+                />
+              )}
+              {activeTab === 'strings' && (
+                <StringsView strings={strings} onRefresh={loadStrings} />
+              )}
+              {activeTab === 'checksum' && (
+                <ChecksumView checksums={checksums} onRefresh={loadChecksums} />
+              )}
+            </div>
           )}
         </main>
       </div>
@@ -527,7 +660,7 @@ function HexEditor({ data, offset, onOffsetChange, onEdit, fileSize }) {
   };
 
   return (
-    <div className="h-full flex flex-col panel-alien" data-testid="hex-editor">
+    <div className="h-full flex flex-col panel-alien">
       <div className="flex items-center gap-4 p-3 border-b border-purple-900/20">
         <div className="flex items-center gap-2">
           <span className="text-sm text-purple-300/60">Aller à:</span>
@@ -569,6 +702,10 @@ function HexEditor({ data, offset, onOffsetChange, onEdit, fileSize }) {
       </div>
 
       <div className="flex-1 overflow-auto p-4 font-mono text-sm">
+        <div className="text-xs text-purple-400/50 mb-2 flex items-center gap-2">
+          <Pencil className="w-3 h-3" />
+          Cliquez sur un byte pour l'éditer (valeur hex)
+        </div>
         <div className="grid gap-1">
           <div className="flex text-purple-400/50 text-xs pb-2 border-b border-purple-900/20">
             <div className="w-20">Offset</div>
@@ -592,16 +729,17 @@ function HexEditor({ data, offset, onOffsetChange, onEdit, fileSize }) {
                       <input
                         type="text"
                         value={editValue}
-                        onChange={(e) => setEditValue(e.target.value.slice(0, 2))}
+                        onChange={(e) => setEditValue(e.target.value.slice(0, 2).toUpperCase())}
                         onKeyDown={handleByteEdit}
                         onBlur={() => setEditingByte(null)}
                         autoFocus
-                        className="w-6 bg-purple-500 text-black text-center rounded px-0"
+                        className="w-6 bg-purple-500 text-black text-center rounded px-0 font-mono"
                       />
                     ) : (
                       <span
                         onClick={() => handleByteClick(byte.offset, byte.value)}
                         className="hex-byte-alien"
+                        title={`Cliquer pour éditer (Dec: ${byte.value})`}
                       >
                         {byte.value.toString(16).toUpperCase().padStart(2, '0')}
                       </span>
@@ -621,7 +759,7 @@ function HexEditor({ data, offset, onOffsetChange, onEdit, fileSize }) {
 }
 
 /* ============ MAPS 2D VIEW COMPONENT ============ */
-function Maps2DView({ maps, knownMaps, selectedMap, mapData, onSelectMap, onScan, onEditCell, onOperation, onExport, getColor }) {
+function Maps2DView({ maps, knownMaps, xdfMaps, selectedMap, mapData, onSelectMap, onScan, onEditCell, onOperation, onExport, getColor }) {
   const [editingCell, setEditingCell] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [customOffset, setCustomOffset] = useState('');
@@ -629,7 +767,7 @@ function Maps2DView({ maps, knownMaps, selectedMap, mapData, onSelectMap, onScan
   const [customCols, setCustomCols] = useState('8');
   const [showTools, setShowTools] = useState(false);
   const [operationValue, setOperationValue] = useState('');
-  const [showAxes, setShowAxes] = useState(true);
+  const [panelWidth, setPanelWidth] = useState(320);
 
   const handleCellClick = (row, col, value) => {
     setEditingCell({ row, col });
@@ -657,136 +795,121 @@ function Maps2DView({ maps, knownMaps, selectedMap, mapData, onSelectMap, onScan
     }
   };
 
-  // Format axis value for display
-  const formatAxisValue = (val, axisType) => {
-    if (axisType?.type === 'RPM') return val;
-    if (axisType?.type === 'Load') return val;
-    if (axisType?.factor) return (val * axisType.factor).toFixed(1);
-    return val;
-  };
-
+  // Combine all maps
+  const allMaps = [...maps];
+  
   return (
-    <div className="h-full flex gap-4" data-testid="maps-view">
-      {/* Maps list */}
-      <div className="w-80 panel-alien flex flex-col">
-        <div className="p-3 border-b border-purple-900/20 flex items-center justify-between">
-          <h3 className="font-semibold text-purple-200">Maps détectées</h3>
-          <button onClick={onScan} className="btn-alien-sm">
-            <RefreshCw className="w-3 h-3" />
-            Scan
-          </button>
-        </div>
-        
-        {/* Known maps */}
-        {knownMaps.length > 0 && (
-          <div className="p-2 border-b border-purple-900/20">
-            <div className="text-xs text-purple-400/50 mb-2">Maps ME7.4.4 connues:</div>
-            <div className="flex flex-wrap gap-1">
-              {knownMaps.slice(0, 12).map((m, idx) => (
-                <span 
-                  key={idx} 
-                  className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded cursor-pointer hover:bg-purple-500/30"
-                  title={m.description}
-                >
-                  {m.name}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-        
-        {/* Custom map input */}
-        <div className="p-3 border-b border-purple-900/20 space-y-2">
-          <div className="text-xs text-purple-400/50">Map manuelle:</div>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              placeholder="Offset (hex)"
-              value={customOffset}
-              onChange={(e) => setCustomOffset(e.target.value)}
-              className="input-alien text-xs flex-1 font-mono"
-            />
-          </div>
-          <div className="flex gap-2 items-center">
-            <input
-              type="number"
-              placeholder="Lignes"
-              value={customRows}
-              onChange={(e) => setCustomRows(e.target.value)}
-              className="input-alien text-xs w-16"
-            />
-            <span className="text-purple-400/50">×</span>
-            <input
-              type="number"
-              placeholder="Cols"
-              value={customCols}
-              onChange={(e) => setCustomCols(e.target.value)}
-              className="input-alien text-xs w-16"
-            />
-            <button onClick={loadCustomMap} className="btn-alien-sm px-3">
-              OK
+    <div className="h-full flex gap-1">
+      {/* Maps list - Resizable */}
+      <ResizablePanel defaultWidth={320} minWidth={250} maxWidth={500} side="left">
+        <div className="h-full panel-alien flex flex-col">
+          <div className="p-3 border-b border-purple-900/20 flex items-center justify-between">
+            <h3 className="font-semibold text-purple-200">Maps ({allMaps.length})</h3>
+            <button onClick={onScan} className="btn-alien-sm">
+              <RefreshCw className="w-3 h-3" />
+              Scan
             </button>
           </div>
-        </div>
-        
-        <div className="flex-1 overflow-auto">
-          {maps.map((map, idx) => (
-            <div
-              key={idx}
-              onClick={() => onSelectMap(map)}
-              className={`p-3 border-b border-purple-900/10 cursor-pointer transition-all ${
-                selectedMap?.offset === map.offset
-                  ? 'bg-purple-500/10 border-l-2 border-l-purple-500'
-                  : 'hover:bg-purple-500/5'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-purple-400 text-sm">
-                  0x{map.offset.toString(16).toUpperCase().padStart(4, '0')}
-                </span>
-                <span className="text-xs text-purple-300/50">{map.rows}×{map.cols}</span>
-              </div>
-              <div className="text-xs text-purple-400/40 mt-1">
-                Min: {map.min} | Max: {map.max}
+          
+          {/* Known + XDF maps */}
+          {(knownMaps.length > 0 || xdfMaps.length > 0) && (
+            <div className="p-2 border-b border-purple-900/20">
+              <div className="text-xs text-purple-400/50 mb-2">Maps définies:</div>
+              <div className="flex flex-wrap gap-1">
+                {knownMaps.slice(0, 6).map((m, idx) => (
+                  <span key={`k${idx}`} className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded cursor-pointer hover:bg-purple-500/30" title={m.description}>
+                    {m.name}
+                  </span>
+                ))}
+                {xdfMaps.slice(0, 6).map((m, idx) => (
+                  <span 
+                    key={`x${idx}`} 
+                    className="text-xs bg-green-500/20 text-green-300 px-2 py-0.5 rounded cursor-pointer hover:bg-green-500/30"
+                    onClick={() => onSelectMap(m)}
+                    title={`XDF: ${m.name}`}
+                  >
+                    {m.name.substring(0, 10)}
+                  </span>
+                ))}
               </div>
             </div>
-          ))}
+          )}
+          
+          {/* Custom map */}
+          <div className="p-3 border-b border-purple-900/20 space-y-2">
+            <div className="text-xs text-purple-400/50">Créer map manuelle:</div>
+            <input
+              type="text"
+              placeholder="Offset hex (ex: 1000)"
+              value={customOffset}
+              onChange={(e) => setCustomOffset(e.target.value)}
+              className="input-alien text-xs w-full font-mono"
+            />
+            <div className="flex gap-2 items-center">
+              <input
+                type="number"
+                placeholder="Lignes"
+                value={customRows}
+                onChange={(e) => setCustomRows(e.target.value)}
+                className="input-alien text-xs w-16"
+              />
+              <span className="text-purple-400/50">×</span>
+              <input
+                type="number"
+                placeholder="Cols"
+                value={customCols}
+                onChange={(e) => setCustomCols(e.target.value)}
+                className="input-alien text-xs w-16"
+              />
+              <button onClick={loadCustomMap} className="btn-alien-sm px-3">OK</button>
+            </div>
+          </div>
+          
+          {/* Maps list */}
+          <div className="flex-1 overflow-auto">
+            {allMaps.map((map, idx) => (
+              <div
+                key={idx}
+                onClick={() => onSelectMap(map)}
+                className={`p-3 border-b border-purple-900/10 cursor-pointer transition-all ${
+                  selectedMap?.offset === map.offset
+                    ? 'bg-purple-500/10 border-l-2 border-l-purple-500'
+                    : 'hover:bg-purple-500/5'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-purple-400 text-sm">
+                    0x{map.offset.toString(16).toUpperCase().padStart(4, '0')}
+                  </span>
+                  <span className="text-xs text-purple-300/50">{map.rows}×{map.cols}</span>
+                </div>
+                {map.name && !map.name.startsWith('MAP_') && (
+                  <div className="text-xs text-green-400 truncate">{map.name}</div>
+                )}
+                <div className="text-xs text-purple-400/40">
+                  Min: {map.min} | Max: {map.max}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      </ResizablePanel>
 
       {/* Map viewer */}
-      <div className="flex-1 panel-alien flex flex-col">
+      <div className="flex-1 panel-alien flex flex-col ml-2">
         {mapData ? (
           <>
-            <div className="p-3 border-b border-purple-900/20 flex items-center justify-between">
+            <div className="p-3 border-b border-purple-900/20 flex items-center justify-between flex-wrap gap-2">
               <div>
-                <h3 className="font-semibold text-purple-200">{selectedMap?.name}</h3>
+                <h3 className="font-semibold text-purple-200">{selectedMap?.name || 'Map'}</h3>
                 <div className="text-xs text-purple-400/50">
                   Offset: 0x{selectedMap?.offset.toString(16).toUpperCase()} | 
                   {selectedMap?.rows}×{selectedMap?.cols} | 
                   Min: {mapData.min} | Max: {mapData.max}
-                  {mapData.x_axis_type?.type && mapData.x_axis_type.type !== 'Index' && (
-                    <span className="ml-2 text-green-400">
-                      X: {mapData.x_axis_type.type} ({mapData.x_axis_type.unit})
-                    </span>
-                  )}
-                  {mapData.y_axis_type?.type && mapData.y_axis_type.type !== 'Index' && (
-                    <span className="ml-2 text-yellow-400">
-                      Y: {mapData.y_axis_type.type} ({mapData.y_axis_type.unit})
-                    </span>
-                  )}
                 </div>
               </div>
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => setShowAxes(!showAxes)} 
-                  className={`btn-alien-sm ${showAxes ? 'bg-purple-500/30' : ''}`}
-                  title="Afficher/Masquer les axes"
-                >
-                  <BarChart3 className="w-4 h-4" />
-                  Axes
-                </button>
-                <button onClick={() => setShowTools(!showTools)} className="btn-alien-sm">
+              <div className="flex gap-2 flex-wrap">
+                <button onClick={() => setShowTools(!showTools)} className={`btn-alien-sm ${showTools ? 'bg-purple-500/30' : ''}`}>
                   <Settings className="w-4 h-4" />
                   Outils
                 </button>
@@ -800,7 +923,7 @@ function Maps2DView({ maps, knownMaps, selectedMap, mapData, onSelectMap, onScan
             {/* Tools panel */}
             {showTools && (
               <div className="p-3 border-b border-purple-900/20 bg-purple-500/5">
-                <div className="text-xs text-purple-400/50 mb-2">Opérations sur la map:</div>
+                <div className="text-xs text-purple-400/50 mb-2">Modifier toute la map:</div>
                 <div className="flex gap-2 items-center flex-wrap">
                   <input
                     type="number"
@@ -809,123 +932,58 @@ function Maps2DView({ maps, knownMaps, selectedMap, mapData, onSelectMap, onScan
                     onChange={(e) => setOperationValue(e.target.value)}
                     className="input-alien text-sm w-24"
                   />
-                  <button 
-                    onClick={() => onOperation('add', parseFloat(operationValue))}
-                    className="btn-alien-sm"
-                    title="Ajouter"
-                  >
-                    <Plus className="w-4 h-4" />
+                  <button onClick={() => onOperation('add', parseFloat(operationValue))} className="btn-alien-sm" title="Ajouter à toutes les cellules">
+                    <Plus className="w-4 h-4" /> Add
                   </button>
-                  <button 
-                    onClick={() => onOperation('subtract', parseFloat(operationValue))}
-                    className="btn-alien-sm"
-                    title="Soustraire"
-                  >
-                    <Minus className="w-4 h-4" />
+                  <button onClick={() => onOperation('subtract', parseFloat(operationValue))} className="btn-alien-sm" title="Soustraire">
+                    <Minus className="w-4 h-4" /> Sub
                   </button>
-                  <button 
-                    onClick={() => onOperation('multiply', parseFloat(operationValue))}
-                    className="btn-alien-sm"
-                    title="Multiplier"
-                  >
-                    <X className="w-4 h-4" />×
+                  <button onClick={() => onOperation('multiply', parseFloat(operationValue))} className="btn-alien-sm" title="Multiplier">
+                    × Mul
                   </button>
-                  <button 
-                    onClick={() => onOperation('percent', parseFloat(operationValue))}
-                    className="btn-alien-sm"
-                    title="Pourcentage (+/-)"
-                  >
+                  <button onClick={() => onOperation('percent', parseFloat(operationValue))} className="btn-alien-sm" title="Ajouter pourcentage">
                     <Percent className="w-4 h-4" />
                   </button>
                 </div>
               </div>
             )}
             
+            {/* Instructions */}
+            <div className="px-3 py-1 text-xs text-purple-400/50 flex items-center gap-2 border-b border-purple-900/10">
+              <Pencil className="w-3 h-3" />
+              Cliquez sur une cellule pour éditer • Entrée pour valider • Échap pour annuler
+            </div>
+            
+            {/* Map grid */}
             <div className="flex-1 overflow-auto p-4">
-              {/* Map with axes */}
-              <div className="inline-block">
-                {/* X-Axis header */}
-                {showAxes && mapData.x_axis && (
-                  <div className="flex ml-12 mb-1">
-                    {mapData.x_axis.slice(0, mapData.cols).map((val, ci) => (
-                      <div
-                        key={ci}
-                        className="text-[10px] text-green-400 font-mono text-center"
-                        style={{ width: '45px', minWidth: '45px' }}
-                        title={mapData.x_axis_type?.type || 'X-Axis'}
-                      >
-                        {formatAxisValue(val, mapData.x_axis_type)}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                
-                {/* Map grid with Y-axis */}
-                <div className="flex">
-                  {/* Y-Axis column */}
-                  {showAxes && mapData.y_axis && (
-                    <div className="flex flex-col mr-1">
-                      {mapData.y_axis.slice(0, mapData.rows).map((val, ri) => (
-                        <div
-                          key={ri}
-                          className="text-[10px] text-yellow-400 font-mono flex items-center justify-end pr-1"
-                          style={{ height: '32px', width: '44px' }}
-                          title={mapData.y_axis_type?.type || 'Y-Axis'}
-                        >
-                          {formatAxisValue(val, mapData.y_axis_type)}
-                        </div>
-                      ))}
+              <div
+                className="grid gap-px"
+                style={{ gridTemplateColumns: `repeat(${mapData.cols}, minmax(50px, 1fr))` }}
+              >
+                {mapData.data.map((row, ri) =>
+                  row.map((value, ci) => (
+                    <div
+                      key={`${ri}-${ci}`}
+                      className="map-cell-alien h-9 text-xs"
+                      style={{ background: getColor(value, mapData.min, mapData.max) }}
+                      onClick={() => handleCellClick(ri, ci, value)}
+                      title={`[${ri},${ci}] = ${value} (0x${value.toString(16).toUpperCase()})`}
+                    >
+                      {editingCell?.row === ri && editingCell?.col === ci ? (
+                        <input
+                          type="number"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onKeyDown={handleCellEdit}
+                          onBlur={() => setEditingCell(null)}
+                          autoFocus
+                          className="w-full h-full bg-white text-black text-center font-mono text-xs"
+                        />
+                      ) : (
+                        <span className="text-white font-mono drop-shadow">{value}</span>
+                      )}
                     </div>
-                  )}
-                  
-                  {/* Map data */}
-                  <div
-                    className="grid gap-px"
-                    style={{
-                      gridTemplateColumns: `repeat(${mapData.cols}, minmax(45px, 1fr))`,
-                    }}
-                  >
-                    {mapData.data.map((row, ri) =>
-                      row.map((value, ci) => (
-                        <div
-                          key={`${ri}-${ci}`}
-                          className="map-cell-alien h-8"
-                          style={{ background: getColor(value, mapData.min, mapData.max) }}
-                          onClick={() => handleCellClick(ri, ci, value)}
-                        >
-                          {editingCell?.row === ri && editingCell?.col === ci ? (
-                            <input
-                              type="text"
-                              value={editValue}
-                              onChange={(e) => setEditValue(e.target.value)}
-                              onKeyDown={handleCellEdit}
-                              onBlur={() => setEditingCell(null)}
-                              autoFocus
-                              className="w-full h-full bg-transparent text-center text-white"
-                            />
-                          ) : (
-                            <span className={value > (mapData.max + mapData.min) / 2 ? 'text-white' : 'text-white'}>
-                              {value}
-                            </span>
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-                
-                {/* Axis legend */}
-                {showAxes && (mapData.x_axis_type?.type !== 'Index' || mapData.y_axis_type?.type !== 'Index') && (
-                  <div className="mt-3 text-xs text-purple-400/60">
-                    <span className="mr-4">
-                      <span className="text-green-400">■</span> X: {mapData.x_axis_type?.type || 'Index'} 
-                      {mapData.x_axis_type?.unit && ` (${mapData.x_axis_type.unit})`}
-                    </span>
-                    <span>
-                      <span className="text-yellow-400">■</span> Y: {mapData.y_axis_type?.type || 'Index'}
-                      {mapData.y_axis_type?.unit && ` (${mapData.y_axis_type.unit})`}
-                    </span>
-                  </div>
+                  ))
                 )}
               </div>
             </div>
@@ -935,7 +993,7 @@ function Maps2DView({ maps, knownMaps, selectedMap, mapData, onSelectMap, onScan
             <div className="text-center">
               <Grid3X3 className="w-16 h-16 mx-auto mb-4 opacity-30" />
               <p>Sélectionnez une map dans la liste</p>
-              <p className="text-sm">ou créez une map manuelle</p>
+              <p className="text-sm mt-2">ou créez une map avec un offset personnalisé</p>
             </div>
           </div>
         )}
@@ -944,23 +1002,23 @@ function Maps2DView({ maps, knownMaps, selectedMap, mapData, onSelectMap, onScan
   );
 }
 
-/* ============ SINGLES VIEW COMPONENT ============ */
+/* ============ SINGLES VIEW ============ */
 function SinglesView({ singles, onRefresh }) {
   const [filter, setFilter] = useState('');
+  const [editingValue, setEditingValue] = useState(null);
   
   const filtered = singles.filter(s => 
     s.name.toLowerCase().includes(filter.toLowerCase()) ||
-    s.offset.toString(16).includes(filter.toLowerCase()) ||
-    (s.description && s.description.toLowerCase().includes(filter.toLowerCase()))
+    s.offset.toString(16).includes(filter.toLowerCase())
   );
 
   return (
-    <div className="h-full panel-alien flex flex-col" data-testid="singles-view">
+    <div className="h-full panel-alien flex flex-col">
       <div className="p-3 border-b border-purple-900/20 flex items-center gap-4">
         <h3 className="font-semibold text-purple-200">Valeurs Singles</h3>
         <input
           type="text"
-          placeholder="Filtrer..."
+          placeholder="Filtrer par nom ou offset..."
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           className="input-alien flex-1 max-w-xs"
@@ -971,21 +1029,17 @@ function SinglesView({ singles, onRefresh }) {
         <span className="text-sm text-purple-400/50">{filtered.length} valeurs</span>
       </div>
       
-      <div className="flex-1 overflow-auto">
-        <div className="grid grid-cols-4 gap-2 p-4">
+      <div className="flex-1 overflow-auto p-4">
+        <div className="grid grid-cols-4 gap-3">
           {filtered.slice(0, 200).map((s, idx) => (
             <div key={idx} className="bg-purple-500/5 border border-purple-900/20 rounded-lg p-3 hover:bg-purple-500/10 transition-colors">
               <div className="text-xs text-purple-400 font-mono">
                 0x{s.offset.toString(16).toUpperCase().padStart(4, '0')}
               </div>
-              <div className="text-lg font-semibold text-purple-100 mt-1">{s.value}</div>
+              <div className="text-xl font-bold text-purple-100 mt-1">{s.value}</div>
               <div className="text-xs text-purple-400/50">
-                0x{s.value.toString(16).toUpperCase().padStart(4, '0')}
-                {s.unit && <span className="ml-1">{s.unit}</span>}
+                Hex: 0x{s.value.toString(16).toUpperCase().padStart(4, '0')}
               </div>
-              {s.description && (
-                <div className="text-xs text-purple-300/40 mt-1 truncate">{s.description}</div>
-              )}
             </div>
           ))}
         </div>
@@ -994,7 +1048,7 @@ function SinglesView({ singles, onRefresh }) {
   );
 }
 
-/* ============ DISASM VIEW COMPONENT ============ */
+/* ============ DISASM VIEW ============ */
 function DisasmView({ data, offset, onOffsetChange, fileSize }) {
   const [goToOffset, setGoToOffset] = useState('');
 
@@ -1006,8 +1060,8 @@ function DisasmView({ data, offset, onOffsetChange, fileSize }) {
   };
 
   return (
-    <div className="h-full panel-alien flex flex-col" data-testid="disasm-view">
-      <div className="p-3 border-b border-purple-900/20 flex items-center gap-4">
+    <div className="h-full panel-alien flex flex-col">
+      <div className="p-3 border-b border-purple-900/20 flex items-center gap-4 flex-wrap">
         <h3 className="font-semibold text-purple-200">Désassembleur C166/ST10</h3>
         <div className="flex items-center gap-2">
           <input
@@ -1018,23 +1072,11 @@ function DisasmView({ data, offset, onOffsetChange, fileSize }) {
             onKeyDown={(e) => e.key === 'Enter' && goTo()}
             className="input-alien w-24 font-mono text-sm"
           />
-          <button onClick={goTo} className="btn-alien-sm">
-            <Search className="w-4 h-4" />
-          </button>
+          <button onClick={goTo} className="btn-alien-sm"><Search className="w-4 h-4" /></button>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => onOffsetChange(Math.max(0, offset - 100))}
-            className="btn-alien-sm"
-          >
-            ← Prev
-          </button>
-          <button
-            onClick={() => onOffsetChange(offset + 100)}
-            className="btn-alien-sm"
-          >
-            Next →
-          </button>
+          <button onClick={() => onOffsetChange(Math.max(0, offset - 100))} className="btn-alien-sm">← Prev</button>
+          <button onClick={() => onOffsetChange(offset + 100)} className="btn-alien-sm">Next →</button>
         </div>
       </div>
       
@@ -1042,34 +1084,16 @@ function DisasmView({ data, offset, onOffsetChange, fileSize }) {
         <div className="disasm-header-alien">
           <div>OFFSET</div>
           <div>BYTES</div>
-          <div>MNEMONIC</div>
+          <div>INSTRUCTION</div>
           <div>OPERANDS</div>
-          <div>COMMENT</div>
         </div>
         
         {data.map((inst, idx) => (
-          <div 
-            key={idx} 
-            className={`disasm-line-alien ${inst.is_branch ? 'bg-purple-500/5' : ''}`}
-          >
-            <div className="disasm-offset-alien">
-              {inst.offset.toString(16).toUpperCase().padStart(8, '0')}
-            </div>
+          <div key={idx} className={`disasm-line-alien ${inst.is_branch ? 'bg-yellow-500/5' : ''}`}>
+            <div className="disasm-offset-alien">{inst.offset.toString(16).toUpperCase().padStart(8, '0')}</div>
             <div className="disasm-bytes-alien">{inst.bytes}</div>
-            <div className={`disasm-mnemonic-alien ${inst.is_branch ? 'text-yellow-400' : ''}`}>
-              {inst.mnemonic}
-            </div>
-            <div className="disasm-operands-alien">
-              {inst.is_branch && inst.branch_target >= 0 ? (
-                <span 
-                  className="cursor-pointer hover:text-purple-300"
-                  onClick={() => onOffsetChange(inst.branch_target)}
-                >
-                  {inst.operands}
-                </span>
-              ) : inst.operands}
-            </div>
-            <div className="disasm-comment-alien">{inst.comment}</div>
+            <div className={`disasm-mnemonic-alien ${inst.is_branch ? 'text-yellow-400' : ''}`}>{inst.mnemonic}</div>
+            <div className="disasm-operands-alien">{inst.operands}</div>
           </div>
         ))}
       </div>
@@ -1077,7 +1101,7 @@ function DisasmView({ data, offset, onOffsetChange, fileSize }) {
   );
 }
 
-/* ============ FUNCTIONS VIEW COMPONENT ============ */
+/* ============ FUNCTIONS VIEW ============ */
 function FunctionsView({ functions, onRefresh, onGoTo }) {
   const [filter, setFilter] = useState('');
   
@@ -1087,9 +1111,9 @@ function FunctionsView({ functions, onRefresh, onGoTo }) {
   );
 
   return (
-    <div className="h-full panel-alien flex flex-col" data-testid="functions-view">
+    <div className="h-full panel-alien flex flex-col">
       <div className="p-3 border-b border-purple-900/20 flex items-center gap-4">
-        <h3 className="font-semibold text-purple-200">Fonctions détectées</h3>
+        <h3 className="font-semibold text-purple-200">Fonctions ({filtered.length})</h3>
         <input
           type="text"
           placeholder="Filtrer..."
@@ -1097,10 +1121,7 @@ function FunctionsView({ functions, onRefresh, onGoTo }) {
           onChange={(e) => setFilter(e.target.value)}
           className="input-alien flex-1 max-w-xs"
         />
-        <button onClick={onRefresh} className="btn-alien-sm">
-          <RefreshCw className="w-4 h-4" />
-        </button>
-        <span className="text-sm text-purple-400/50">{filtered.length} fonctions</span>
+        <button onClick={onRefresh} className="btn-alien-sm"><RefreshCw className="w-4 h-4" /></button>
       </div>
       
       <div className="flex-1 overflow-auto">
@@ -1114,9 +1135,7 @@ function FunctionsView({ functions, onRefresh, onGoTo }) {
               <GitBranch className="w-4 h-4 text-purple-400" />
               <div>
                 <div className="font-mono text-purple-300">{f.name}</div>
-                <div className="text-xs text-purple-400/50">
-                  Offset: 0x{f.offset.toString(16).toUpperCase()} | Size: {f.size} bytes
-                </div>
+                <div className="text-xs text-purple-400/50">0x{f.offset.toString(16).toUpperCase()}</div>
               </div>
             </div>
             <Target className="w-4 h-4 text-purple-400/50" />
@@ -1127,18 +1146,16 @@ function FunctionsView({ functions, onRefresh, onGoTo }) {
   );
 }
 
-/* ============ STRINGS VIEW COMPONENT ============ */
+/* ============ STRINGS VIEW ============ */
 function StringsView({ strings, onRefresh }) {
   const [filter, setFilter] = useState('');
   
-  const filtered = strings.filter(s => 
-    s.text.toLowerCase().includes(filter.toLowerCase())
-  );
+  const filtered = strings.filter(s => s.text.toLowerCase().includes(filter.toLowerCase()));
 
   return (
-    <div className="h-full panel-alien flex flex-col" data-testid="strings-view">
+    <div className="h-full panel-alien flex flex-col">
       <div className="p-3 border-b border-purple-900/20 flex items-center gap-4">
-        <h3 className="font-semibold text-purple-200">Strings détectées</h3>
+        <h3 className="font-semibold text-purple-200">Strings ({filtered.length})</h3>
         <input
           type="text"
           placeholder="Rechercher..."
@@ -1146,18 +1163,13 @@ function StringsView({ strings, onRefresh }) {
           onChange={(e) => setFilter(e.target.value)}
           className="input-alien flex-1 max-w-xs"
         />
-        <button onClick={onRefresh} className="btn-alien-sm">
-          <RefreshCw className="w-4 h-4" />
-        </button>
-        <span className="text-sm text-purple-400/50">{filtered.length} strings</span>
+        <button onClick={onRefresh} className="btn-alien-sm"><RefreshCw className="w-4 h-4" /></button>
       </div>
       
       <div className="flex-1 overflow-auto">
         {filtered.map((s, idx) => (
           <div key={idx} className="string-item-alien">
-            <div className="text-purple-400">
-              0x{s.offset.toString(16).toUpperCase().padStart(4, '0')}
-            </div>
+            <div className="text-purple-400 font-mono">0x{s.offset.toString(16).toUpperCase().padStart(4, '0')}</div>
             <div className="text-purple-100 truncate font-mono">{s.text}</div>
           </div>
         ))}
@@ -1166,23 +1178,17 @@ function StringsView({ strings, onRefresh }) {
   );
 }
 
-/* ============ CHECKSUM VIEW COMPONENT ============ */
+/* ============ CHECKSUM VIEW ============ */
 function ChecksumView({ checksums, onRefresh }) {
   if (!checksums) {
-    return (
-      <div className="h-full panel-alien flex items-center justify-center">
-        <div className="spinner-alien" />
-      </div>
-    );
+    return <div className="h-full panel-alien flex items-center justify-center"><div className="spinner-alien" /></div>;
   }
 
   return (
-    <div className="h-full panel-alien flex flex-col" data-testid="checksum-view">
+    <div className="h-full panel-alien flex flex-col">
       <div className="p-3 border-b border-purple-900/20 flex items-center justify-between">
         <h3 className="font-semibold text-purple-200">Checksums</h3>
-        <button onClick={onRefresh} className="btn-alien-sm">
-          <RefreshCw className="w-4 h-4" />
-        </button>
+        <button onClick={onRefresh} className="btn-alien-sm"><RefreshCw className="w-4 h-4" /></button>
       </div>
       
       <div className="flex-1 overflow-auto p-4">
@@ -1190,13 +1196,11 @@ function ChecksumView({ checksums, onRefresh }) {
           {Object.entries(checksums).map(([key, value]) => (
             <div key={key} className="bg-purple-500/5 border border-purple-900/20 rounded-lg p-4">
               <div className="text-sm text-purple-400/60 uppercase">{key.replace(/_/g, ' ')}</div>
-              <div className="text-xl font-mono text-purple-200 mt-1">
+              <div className="text-2xl font-mono text-purple-200 mt-1">
                 {typeof value === 'number' ? `0x${value.toString(16).toUpperCase()}` : value}
               </div>
               {typeof value === 'number' && (
-                <div className="text-xs text-purple-400/40 mt-1">
-                  Decimal: {value}
-                </div>
+                <div className="text-xs text-purple-400/40 mt-1">Dec: {value}</div>
               )}
             </div>
           ))}
